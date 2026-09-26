@@ -1,0 +1,61 @@
+name: CI
+
+# D2 起即生效的质量护栏（对应开发计划 CI 门禁条款的提前落地）。
+# M1 首个测试用例入库前，pytest 以"未收集到测试不判红"的方式运行；用例落地后自动转硬门禁。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    name: lint-test (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+
+    # Windows runner 默认 shell 为 pwsh，这里统一指定 bash（Git Bash 随 runner 内置），
+    # 保证 pytest 退出码容忍逻辑与脚本行为在两个平台上完全一致。
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package (editable + dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pip-audit
+
+      - name: Security audit (pip-audit)
+        # 核心期即开启依赖漏洞扫描（原计划仅维护期 T9-04 覆盖）。
+        # 若出现当前无法立即升级的告警，须用 `pip-audit --ignore <VULN-ID>` 定向放行，
+        # 并在此处注释登记原因与复审过期日；禁止无注释的全局忽略。
+        run: pip-audit
+
+      - name: Ruff lint
+        run: ruff check src tests
+
+      - name: Mypy strict
+        run: mypy src
+
+      - name: Pytest
+        run: |
+          # pytest 退出码 5 = 未收集到测试（D2 时 tests/ 仅有 .gitkeep 占位）。
+          # M1 首个测试落地后退出码 5 不再出现，本容忍逻辑即自动失效；
+          # 真实失败（1=用例失败、2=测试中断）仍会让 CI 变红，不会被吞掉。
+          pytest -q || [ $? -eq 5 ]
