@@ -16,7 +16,7 @@
 # 包版本号。此处与 pyproject.toml 的 [project].version 保持手工双写：
 # 采用双写而非运行时动态读取元数据，是为了让 import aquamind 不触发
 # 任何文件系统解析，保证导入零副作用、零耗时抖动。
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 # 显式声明对外导出符号清单，避免 `from aquamind import *` 污染调用方命名空间。
 __all__ = ["__version__"]

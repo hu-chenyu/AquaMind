@@ -9,10 +9,11 @@ requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# 包名必须全小写，且与 PyPI 上占用的名称保持一致
-name = "aquamind"
+# Distribution name（PyPI 展示名）可用驼峰，用于品牌展示；
+# import 时仍用小写 aquamind（PEP 8），pip 安装大小写不敏感（PEP 503）
+name = "AquaMind"
 # 版本号与 src/aquamind/__init__.py 的 __version__ 手工双写保持一致
-version = "0.0.3"
+version = "0.0.4"
 description = "LLM 应用功能与非功能一体化测试工具：并发负载下联动测量 TTFT/质量退化/成本，输出 SLO 双门禁报告"
 readme = "README.md"
 requires-python = ">=3.11"
