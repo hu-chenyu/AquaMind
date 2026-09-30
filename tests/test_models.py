@@ -1,7 +1,7 @@
 """用例契约模型单元测试。
 
-覆盖：合法最小/完整用例构造、必填字段缺失报错定位、可选字段默认值、
-weights 值非负、ScoreTag.weight 非负、tolerance 非负。
+覆盖：合法最小/完整用例构造、必填字段缺失报错定位、未知字段（extra）拒绝、
+可选字段默认值、weights 值非负、ScoreTag.weight 非负、tolerance 非负。
 """
 
 from __future__ import annotations
@@ -52,29 +52,33 @@ class TestRequiredFieldErrors:
     def test_missing_input_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(expected={"type": "exact", "value": "你好"})
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("input",)
+        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
+        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
+        assert "input" in error_fields
         assert "input" in str(exc_info.value)
 
     def test_missing_expected_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(input="你好")
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("expected",)
+        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
+        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
+        assert "expected" in error_fields
         assert "expected" in str(exc_info.value)
 
     def test_expected_missing_type_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(input="你好", expected={"value": "你好"})
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("expected", "type")
+        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
+        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
+        assert "type" in error_fields
         assert "type" in str(exc_info.value)
 
     def test_expected_missing_value_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(input="你好", expected={"type": "exact"})
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("expected", "value")
+        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
+        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
+        assert "value" in error_fields
         assert "value" in str(exc_info.value)
 
 
@@ -92,6 +96,16 @@ class TestDefaultValues:
     def test_weights_defaults_to_empty_dict(self) -> None:
         case = TestCase(**_minimal_case_data())
         assert case.weights == {}
+
+    def test_expected_spec_tolerance_default(self) -> None:
+        """ExpectedSpec 不传 tolerance 时默认应为 0.0。"""
+        spec = ExpectedSpec(type="exact", value="hello")
+        assert spec.tolerance == 0.0
+
+    def test_score_tag_weight_default(self) -> None:
+        """ScoreTag 不传 weight 时默认应为 1.0。"""
+        tag = ScoreTag(name="accuracy")
+        assert tag.weight == 1.0
 
 
 class TestNonNegativeValidation:
@@ -118,3 +132,19 @@ class TestNonNegativeValidation:
         errors = exc_info.value.errors()
         assert errors[0]["loc"] == ("tolerance",)
         assert "tolerance" in str(exc_info.value)
+
+
+class TestExtraFieldsForbidden:
+    """测试未知字段（extra）被严格拒绝，防止拼写错误被静默忽略。"""
+
+    def test_extra_fields_forbidden(self) -> None:
+        """TestCase 传入未知字段（拼写错误的 weigths）时应抛 ValidationError。"""
+        with pytest.raises(ValidationError) as exc_info:
+            TestCase(
+                input="1+1=?",
+                expected={"type": "exact", "value": "2"},
+                weigths={"accuracy": 1.0},
+            )
+        # 错误类型须为 extra_forbidden，且错误信息定位到拼写错误的字段名
+        assert any(e["type"] == "extra_forbidden" for e in exc_info.value.errors())
+        assert "weigths" in str(exc_info.value)

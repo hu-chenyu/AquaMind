@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ExpectedSpec(BaseModel):
@@ -19,6 +19,9 @@ class ExpectedSpec(BaseModel):
         value: 期望值，具体类型由 type 决定
         tolerance: 数值容差，须非负；仅对数值型期望有意义
     """
+
+    # 严格模式：禁止未知字段，防止字段名拼写错误被静默忽略
+    model_config = ConfigDict(extra="forbid")
 
     type: str = Field(description="期望类型，如 exact/regex/contains/judge")
     value: Any = Field(description="期望值，具体类型由 type 决定")
@@ -32,6 +35,9 @@ class ScoreTag(BaseModel):
         name: 标签名（如 accuracy/consistency）
         weight: 标签权重，须非负
     """
+
+    # 严格模式：禁止未知字段，防止字段名拼写错误被静默忽略
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="标签名，如 accuracy/consistency")
     weight: float = Field(default=1.0, ge=0.0, description="标签权重，须非负")
@@ -47,6 +53,9 @@ class TestCase(BaseModel):
         score_tags: 应命中的评分标签列表（可选，默认空 list）
         weights: 各评分维度权重（可选，默认空 dict，值须非负）
     """
+
+    # 严格模式：禁止未知字段，防止字段名拼写错误被静默忽略
+    model_config = ConfigDict(extra="forbid")
 
     # 告知 pytest：本类不是测试类（名称以 Test 开头，避免被误收集产生 PytestCollectionWarning）
     __test__ = False
