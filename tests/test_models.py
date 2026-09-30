@@ -1,0 +1,120 @@
+"""用例契约模型单元测试。
+
+覆盖：合法最小/完整用例构造、必填字段缺失报错定位、可选字段默认值、
+weights 值非负、ScoreTag.weight 非负、tolerance 非负。
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from aquamind.models import ExpectedSpec, ScoreTag, TestCase
+
+
+def _minimal_case_data() -> dict[str, object]:
+    """构造合法最小用例的字段载荷（仅必填字段）。"""
+    return {
+        "input": "你好",
+        "expected": {"type": "exact", "value": "你好"},
+    }
+
+
+class TestValidConstruction:
+    """测试合法用例构造路径。"""
+
+    def test_minimal_case_constructs(self) -> None:
+        case = TestCase(**_minimal_case_data())
+        assert case.input == "你好"
+        assert case.expected.type == "exact"
+        assert case.expected.value == "你好"
+
+    def test_full_case_constructs(self) -> None:
+        case = TestCase(
+            input="1+1=?",
+            context={"lang": "zh"},
+            expected={"type": "contains", "value": "2", "tolerance": 0.1},
+            score_tags=[{"name": "accuracy", "weight": 0.9}],
+            weights={"accuracy": 0.8},
+        )
+        # 完整用例的所有字段应可访问且取值正确
+        assert case.context == {"lang": "zh"}
+        assert case.expected.tolerance == 0.1
+        assert len(case.score_tags) == 1
+        assert case.score_tags[0].name == "accuracy"
+        assert case.score_tags[0].weight == 0.9
+        assert case.weights["accuracy"] == 0.8
+
+
+class TestRequiredFieldErrors:
+    """测试必填字段缺失时 ValidationError 的字段定位。"""
+
+    def test_missing_input_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TestCase(expected={"type": "exact", "value": "你好"})
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("input",)
+        assert "input" in str(exc_info.value)
+
+    def test_missing_expected_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TestCase(input="你好")
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("expected",)
+        assert "expected" in str(exc_info.value)
+
+    def test_expected_missing_type_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TestCase(input="你好", expected={"value": "你好"})
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("expected", "type")
+        assert "type" in str(exc_info.value)
+
+    def test_expected_missing_value_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TestCase(input="你好", expected={"type": "exact"})
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("expected", "value")
+        assert "value" in str(exc_info.value)
+
+
+class TestDefaultValues:
+    """测试可选字段的默认值。"""
+
+    def test_context_defaults_to_empty_dict(self) -> None:
+        case = TestCase(**_minimal_case_data())
+        assert case.context == {}
+
+    def test_score_tags_defaults_to_empty_list(self) -> None:
+        case = TestCase(**_minimal_case_data())
+        assert case.score_tags == []
+
+    def test_weights_defaults_to_empty_dict(self) -> None:
+        case = TestCase(**_minimal_case_data())
+        assert case.weights == {}
+
+
+class TestNonNegativeValidation:
+    """测试三处非负校验：weights 值、ScoreTag.weight、tolerance。"""
+
+    def test_negative_weight_value_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            TestCase(**_minimal_case_data(), weights={"accuracy": -0.5})
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("weights",)
+        # 错误消息中应包含违规的维度名
+        assert "accuracy" in str(exc_info.value)
+
+    def test_score_tag_negative_weight_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            ScoreTag(name="accuracy", weight=-1.0)
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("weight",)
+        assert "weight" in str(exc_info.value)
+
+    def test_negative_tolerance_rejected(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            ExpectedSpec(type="exact", value="你好", tolerance=-0.1)
+        errors = exc_info.value.errors()
+        assert errors[0]["loc"] == ("tolerance",)
+        assert "tolerance" in str(exc_info.value)
