@@ -88,6 +88,8 @@ python_files = ["test_*.py"]
 asyncio_mode = "auto"
 # 显式声明 slow 标记，避免未知标记告警
 markers = ["slow: 耗时较长的安装与构建校验"]
+# CI 零警告护栏：PytestCollectionWarning 直接判红（专治 __test__=False 被删后 TestCase 被误收集）
+filterwarnings = ["error::pytest.PytestCollectionWarning"]
 
 [tool.coverage.run]
 # 覆盖率只统计包源码，示例与测试自身不计入
