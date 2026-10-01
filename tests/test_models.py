@@ -55,7 +55,6 @@ class TestRequiredFieldErrors:
         # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("input",) in error_locs
-        assert "input" in str(exc_info.value)
 
     def test_missing_expected_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -63,7 +62,6 @@ class TestRequiredFieldErrors:
         # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("expected",) in error_locs
-        assert "expected" in str(exc_info.value)
 
     def test_expected_missing_type_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -71,7 +69,6 @@ class TestRequiredFieldErrors:
         # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("expected", "type") in error_locs
-        assert "type" in str(exc_info.value)
 
     def test_expected_missing_value_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -79,7 +76,6 @@ class TestRequiredFieldErrors:
         # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("expected", "value") in error_locs
-        assert "value" in str(exc_info.value)
 
 
 class TestDefaultValues:
@@ -117,8 +113,8 @@ class TestNonNegativeValidation:
         # 元组集合断言：不依赖 pydantic 错误顺序
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("weights",) in error_locs
-        # 错误消息中应包含违规的维度名
-        assert "accuracy" in str(exc_info.value)
+        # 自定义校验器的错误消息应含违规维度名：元组断言只覆盖字段定位，消息内容需单独验证
+        assert any("accuracy" in e["msg"] for e in exc_info.value.errors())
 
     def test_score_tag_negative_weight_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -126,7 +122,6 @@ class TestNonNegativeValidation:
         # 元组集合断言：不依赖 pydantic 错误顺序
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("weight",) in error_locs
-        assert "weight" in str(exc_info.value)
 
     def test_negative_tolerance_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
@@ -134,7 +129,6 @@ class TestNonNegativeValidation:
         # 元组集合断言：不依赖 pydantic 错误顺序
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("tolerance",) in error_locs
-        assert "tolerance" in str(exc_info.value)
 
 
 class TestExtraFieldsForbidden:
@@ -148,6 +142,24 @@ class TestExtraFieldsForbidden:
                 expected={"type": "exact", "value": "2"},
                 weigths={"accuracy": 1.0},
             )
-        # 错误类型须为 extra_forbidden，且错误信息定位到拼写错误的字段名
+        # 元组集合断言：不依赖 pydantic 错误顺序，精确定位到拼写错误的字段名
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("weigths",) in error_locs
+        # 错误类型须为 extra_forbidden：验证报错类型维度，与字段定位是不同维度
         assert any(e["type"] == "extra_forbidden" for e in exc_info.value.errors())
-        assert "weigths" in str(exc_info.value)
+
+    def test_expected_spec_extra_forbidden(self) -> None:
+        """ExpectedSpec 传入未知字段（拼写错误的 tol）时应抛 ValidationError。"""
+        with pytest.raises(ValidationError) as exc_info:
+            ExpectedSpec(type="exact", value="hello", tol=0.1)
+        # 元组集合断言：精确定位到未知字段 tol，保证 ExpectedSpec 的 extra="forbid" 生效
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("tol",) in error_locs
+
+    def test_score_tag_extra_forbidden(self) -> None:
+        """ScoreTag 传入未知字段（拼写错误的 wight）时应抛 ValidationError。"""
+        with pytest.raises(ValidationError) as exc_info:
+            ScoreTag(name="accuracy", wight=0.5)
+        # 元组集合断言：精确定位到未知字段 wight，保证 ScoreTag 的 extra="forbid" 生效
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("wight",) in error_locs
