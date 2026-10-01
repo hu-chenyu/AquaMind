@@ -52,33 +52,33 @@ class TestRequiredFieldErrors:
     def test_missing_input_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(expected={"type": "exact", "value": "你好"})
-        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
-        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
-        assert "input" in error_fields
+        # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("input",) in error_locs
         assert "input" in str(exc_info.value)
 
     def test_missing_expected_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(input="你好")
-        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
-        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
-        assert "expected" in error_fields
+        # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("expected",) in error_locs
         assert "expected" in str(exc_info.value)
 
     def test_expected_missing_type_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(input="你好", expected={"value": "你好"})
-        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
-        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
-        assert "type" in error_fields
+        # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("expected", "type") in error_locs
         assert "type" in str(exc_info.value)
 
     def test_expected_missing_value_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(input="你好", expected={"type": "exact"})
-        # 集合断言：取全部错误定位中的字段名，不依赖 pydantic 返回错误的顺序
-        error_fields = {part for e in exc_info.value.errors() for part in e["loc"]}
-        assert "value" in error_fields
+        # 元组集合断言：不依赖 pydantic 错误顺序，同时保住嵌套字段父路径
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("expected", "value") in error_locs
         assert "value" in str(exc_info.value)
 
 
@@ -114,23 +114,26 @@ class TestNonNegativeValidation:
     def test_negative_weight_value_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             TestCase(**_minimal_case_data(), weights={"accuracy": -0.5})
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("weights",)
+        # 元组集合断言：不依赖 pydantic 错误顺序
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("weights",) in error_locs
         # 错误消息中应包含违规的维度名
         assert "accuracy" in str(exc_info.value)
 
     def test_score_tag_negative_weight_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             ScoreTag(name="accuracy", weight=-1.0)
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("weight",)
+        # 元组集合断言：不依赖 pydantic 错误顺序
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("weight",) in error_locs
         assert "weight" in str(exc_info.value)
 
     def test_negative_tolerance_rejected(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
             ExpectedSpec(type="exact", value="你好", tolerance=-0.1)
-        errors = exc_info.value.errors()
-        assert errors[0]["loc"] == ("tolerance",)
+        # 元组集合断言：不依赖 pydantic 错误顺序
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("tolerance",) in error_locs
         assert "tolerance" in str(exc_info.value)
 
 
