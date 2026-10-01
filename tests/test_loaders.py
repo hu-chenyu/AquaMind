@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,22 @@ class TestLoadErrors:
         with pytest.raises(LoaderError) as exc_info:
             load_cases(path)
         assert "不支持的文件格式" in str(exc_info.value)
+
+    def test_directory_path_rejected(self, tmp_path: Path) -> None:
+        """目录入参应统一包装为 LoaderError（跨平台覆盖目录读取失败场景）。"""
+        dir_path = tmp_path / "cases.yaml"
+        dir_path.mkdir()
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(dir_path)
+        # context 必须精确携带坏入参路径，便于定位
+        assert exc_info.value.context["file"] == str(dir_path)
+        message = str(exc_info.value)
+        if os.name == "nt":
+            # Windows：open 目录抛 PermissionError，走“文件不可读”分支
+            assert "文件不可读" in message
+        else:
+            # POSIX：open 目录抛 IsADirectoryError，走“路径是目录而非文件”分支（P2-1 修复点）
+            assert "路径是目录而非文件" in message
 
 
 class TestContractPropagation:
