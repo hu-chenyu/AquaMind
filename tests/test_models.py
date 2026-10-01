@@ -77,6 +77,14 @@ class TestRequiredFieldErrors:
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("expected", "value") in error_locs
 
+    def test_score_tag_name_required(self) -> None:
+        """ScoreTag 不传 name（必填字段）时应抛 ValidationError。"""
+        with pytest.raises(ValidationError) as exc_info:
+            ScoreTag()
+        # 元组集合断言：不依赖 pydantic 错误顺序，精确定位到缺失的必填字段 name
+        error_locs = {e["loc"] for e in exc_info.value.errors()}
+        assert ("name",) in error_locs
+
 
 class TestDefaultValues:
     """测试可选字段的默认值。"""
@@ -155,6 +163,8 @@ class TestExtraFieldsForbidden:
         # 元组集合断言：精确定位到未知字段 tol，保证 ExpectedSpec 的 extra="forbid" 生效
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("tol",) in error_locs
+        # 错误类型须为 extra_forbidden：验证报错类型维度，与字段定位是不同维度
+        assert any(e["type"] == "extra_forbidden" for e in exc_info.value.errors())
 
     def test_score_tag_extra_forbidden(self) -> None:
         """ScoreTag 传入未知字段（拼写错误的 wight）时应抛 ValidationError。"""
@@ -163,3 +173,5 @@ class TestExtraFieldsForbidden:
         # 元组集合断言：精确定位到未知字段 wight，保证 ScoreTag 的 extra="forbid" 生效
         error_locs = {e["loc"] for e in exc_info.value.errors()}
         assert ("wight",) in error_locs
+        # 错误类型须为 extra_forbidden：验证报错类型维度，与字段定位是不同维度
+        assert any(e["type"] == "extra_forbidden" for e in exc_info.value.errors())
