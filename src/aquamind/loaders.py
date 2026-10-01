@@ -52,6 +52,8 @@ def load_cases(path: str | Path) -> list[TestCase]:
         raise _report_error(file_str, None, f"文件不存在: {file_str}") from e
     except PermissionError as e:
         raise _report_error(file_str, None, f"文件不可读: {file_str}") from e
+    except IsADirectoryError as e:
+        raise _report_error(file_str, None, f"路径是目录而非文件: {file_str}") from e
 
     if suffix in _YAML_SUFFIXES:
         raw_items = _parse_yaml(content, file_str)
