@@ -32,7 +32,7 @@ def load_cases(path: str | Path) -> list[TestCase]:
         list[TestCase]: 通过 TestCase 契约校验的非空用例列表。
 
     Raises:
-        LoaderError: 扩展名不支持、文件不存在或不可读、解析失败、文件为空时抛出。
+        LoaderError: 扩展名不支持、文件不存在、不可读或路径是目录、解析失败、文件为空时抛出。
         ValidationError: 用例字段不符合 TestCase 契约时由 pydantic 抛出，本函数不捕获。
     """
     file_path = Path(path)
