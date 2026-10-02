@@ -2,7 +2,8 @@
 
 覆盖：CallableAdapter 正常调用与 messages 透传、AdapterResponse 结构归一与严格模式
 （extra="forbid"）、BaseAdapter 抽象约束（不可实例化 / 子类必须实现 acomplete）、
-stream=True 不支持时的 AdapterError 拦截、后端异常包装为 AdapterError 并保留异常链。
+stream=True 不支持时的 AdapterError 拦截、后端异常包装为 AdapterError 并保留异常链、
+非 str 返回导致的归一化失败包装、多层异常链完整保留。
 """
 
 from __future__ import annotations
@@ -79,6 +80,40 @@ class TestCallableAdapter:
         assert isinstance(exc_info.value.__cause__, ValueError)
         assert exc_info.value.context["adapter"] == "callable"
         assert exc_info.value.context["error_type"] == "ValueError"
+
+    def test_non_str_return_wrapped(self) -> None:
+        """fn 返回非 str（如 dict）时归一化失败，应被包装为 AdapterError。"""
+
+        def _returns_dict(messages: list[dict[str, str]]) -> str:
+            """模拟后端返回结构体（与 content: str 契约不符）。"""
+            payload = {"result": "hello", "message_count": len(messages)}
+            return payload  # type: ignore[return-value]
+
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(CallableAdapter(_returns_dict).acomplete(_MESSAGES))
+        assert "调用失败" in str(exc_info.value)
+        # 异常链保留：__cause__ 应为 pydantic 的 ValidationError（归一化失败）
+        assert isinstance(exc_info.value.__cause__, ValidationError)
+        assert exc_info.value.context["adapter"] == "callable"
+        assert exc_info.value.context["error_type"] == "ValidationError"
+
+    def test_nested_exception_chain_preserved(self) -> None:
+        """fn 内部的多层异常链应被完整保留，不因适配层包装而丢失中间层。"""
+
+        def _raises_nested(messages: list[dict[str, str]]) -> str:
+            """构造两层异常链：KeyError 被包装为 ConnectionError。"""
+            try:
+                raise KeyError(f"底层故障（入参 {len(messages)} 条消息）")
+            except KeyError as ke:
+                raise ConnectionError("上层故障") from ke
+
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(CallableAdapter(_raises_nested).acomplete(_MESSAGES))
+        # 第一层：适配层包装的原始异常应为 ConnectionError
+        assert isinstance(exc_info.value.__cause__, ConnectionError)
+        # 第二层：原始异常自身的 cause 链应完整保留（KeyError），便于逐层定位
+        assert isinstance(exc_info.value.__cause__.__cause__, KeyError)
+        assert exc_info.value.context["error_type"] == "ConnectionError"
 
 
 class TestAdapterResponseContract:
