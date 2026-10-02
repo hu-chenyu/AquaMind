@@ -42,7 +42,8 @@ class CallableAdapter(BaseAdapter):
             AdapterResponse: content 与 raw 均为 fn 的返回值。
 
         Raises:
-            AdapterError: stream=True 时抛出（暂不支持流式调用）。
+            AdapterError: stream=True 时抛出（暂不支持流式调用）；
+                fn 抛出的任意异常都会被包装为 AdapterError，原始异常经 from 保留在 __cause__。
         """
         if stream:
             raise AdapterError(
@@ -53,5 +54,12 @@ class CallableAdapter(BaseAdapter):
                     "reason": "CallableAdapter 暂不支持流式",
                 },
             )
-        result = self.fn(messages)
+        try:
+            result = self.fn(messages)
+        except Exception as e:
+            # 后端异常统一包装为契约异常，调用方只需 except AdapterError 即可捕获全部故障
+            raise AdapterError(
+                message=f"适配器调用失败: {type(e).__name__}",
+                context={"adapter": "callable", "error_type": type(e).__name__},
+            ) from e
         return AdapterResponse(content=result, raw=result, metadata={"adapter": "callable"})
