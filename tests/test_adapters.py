@@ -24,6 +24,18 @@ class _IncompleteAdapter(BaseAdapter):
     """仅继承 BaseAdapter 而不实现 acomplete，用于验证抽象方法约束。"""
 
 
+class _DelegatingAdapter(BaseAdapter):
+    """已实现 acomplete 但显式转交基类默认实现，用于验证基类的兜底行为。"""
+
+    async def acomplete(
+        self,
+        messages: list[dict[str, str]],
+        stream: bool = False,
+    ) -> AdapterResponse:
+        """把调用转交给 BaseAdapter.acomplete 的默认实现（正常子类不应这样写）。"""
+        return await super().acomplete(messages, stream)
+
+
 class TestCallableAdapter:
     """测试本地函数适配器的调用与归一化行为。"""
 
@@ -142,3 +154,27 @@ class TestBaseAdapterContract:
         with pytest.raises(TypeError) as exc_info:
             _IncompleteAdapter()  # type: ignore[abstract]
         assert "_IncompleteAdapter" in str(exc_info.value)
+
+
+class TestBaseAdapterDefaultImplementation:
+    """测试 BaseAdapter.acomplete 的兜底实现（抽象方法体本身）。"""
+
+    def test_super_acomplete_raises_not_implemented(self) -> None:
+        """转交基类的 acomplete 应抛 NotImplementedError，而不是静默返回 None。"""
+        adapter = _DelegatingAdapter()
+        with pytest.raises(NotImplementedError) as exc_info:
+            asyncio.run(adapter.acomplete(_MESSAGES))
+        # 基类兜底必须是明确的 NotImplementedError：实现缺失时要当场暴露，
+        # 否则上层会拿到 None 并在后续归一化环节报出难以定位的错误
+        assert type(exc_info.value) is NotImplementedError
+
+    def test_super_acomplete_raises_for_stream_request(self) -> None:
+        """stream=True 走到基类兜底时同样抛 NotImplementedError（基类不做流式分支）。"""
+        adapter = _DelegatingAdapter()
+        with pytest.raises(NotImplementedError):
+            asyncio.run(adapter.acomplete(_MESSAGES, stream=True))
+
+    def test_acomplete_is_abstract_and_async(self) -> None:
+        """acomplete 须同时是抽象方法与协程函数，保证子类沿用异步签名。"""
+        assert BaseAdapter.acomplete.__isabstractmethod__ is True
+        assert asyncio.iscoroutinefunction(BaseAdapter.acomplete)
