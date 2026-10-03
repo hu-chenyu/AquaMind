@@ -176,3 +176,35 @@ class TestLoadConfig:
             pytest.fail("should have raised ConfigError")
         except ConfigError as e:
             assert "error_type" in e.context
+
+
+class TestLogLevelValidator:
+    """测试 log_level 校验器：字符串统一大写，非字符串原样透传给 pydantic 判定。"""
+
+    def test_non_str_log_level_deferred_to_pydantic(self) -> None:
+        """非 str 的 log_level 不在校验器内被改写，应由 pydantic 报字段级类型错误。
+
+        若校验器对任意输入都调用 .upper()，此处抛出的会是 AttributeError
+        而不是可定位到 log_level 字段的契约错误。
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(log_level=123)  # type: ignore[arg-type]
+        assert exc_info.value.errors()[0]["loc"] == ("log_level",)
+
+    def test_none_log_level_rejected(self) -> None:
+        """None 同样原样透传给 pydantic，报错定位到 log_level 字段。"""
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(log_level=None)  # type: ignore[arg-type]
+        assert exc_info.value.errors()[0]["loc"] == ("log_level",)
+
+    def test_validator_returns_non_str_unchanged(self) -> None:
+        """校验器对非 str 输入原样返回同一对象，不做任何类型推断或转换。"""
+        sentinel: object = object()
+        assert Settings._uppercase_log_level(sentinel) is sentinel  # type: ignore[arg-type]
+        assert Settings._uppercase_log_level(123) == 123  # type: ignore[arg-type]
+        assert Settings._uppercase_log_level(None) is None  # type: ignore[arg-type]
+
+    def test_validator_uppercases_str(self) -> None:
+        """校验器对 str 输入统一转大写，保留既有归一语义。"""
+        assert Settings._uppercase_log_level("warning") == "WARNING"
+        assert Settings._uppercase_log_level("DeBuG") == "DEBUG"

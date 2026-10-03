@@ -189,3 +189,76 @@ class TestContractPropagation:
         with pytest.raises(ValidationError) as exc_info:
             load_cases(_write_yaml(tmp_path, content))
         assert "input" in str(exc_info.value)
+
+
+class TestCaseListShapeValidation:
+    """测试顶层结构与元素类型校验（YAML/JSON 两条解析路径共用同一套规则）。"""
+
+    def test_yaml_top_level_mapping_rejected(self, tmp_path: Path) -> None:
+        """YAML 顶层是 mapping（单条用例漏写列表符号）时应报“顶层必须是数组”。"""
+        content = 'input: "1+1=?"\nexpected:\n  type: exact\n  value: "2"\n'
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_yaml(tmp_path, content))
+        # 错误消息须点名实际类型，用户才能直接定位写法问题
+        assert "用例文件顶层必须是数组" in str(exc_info.value)
+        assert "dict" in str(exc_info.value)
+        # 结构性问题无法定位到具体行，line 应为 None 而非误报
+        assert exc_info.value.context["line"] is None
+
+    def test_json_top_level_mapping_rejected(self, tmp_path: Path) -> None:
+        """JSON 顶层是 object 时同样应被拦截（与 YAML 走同一校验）。"""
+        content = '{"input": "1+1=?", "expected": {"type": "exact", "value": "2"}}'
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_json(tmp_path, content))
+        assert "用例文件顶层必须是数组" in str(exc_info.value)
+        assert "dict" in str(exc_info.value)
+
+    def test_yaml_top_level_scalar_rejected(self, tmp_path: Path) -> None:
+        """YAML 顶层是标量时应报出标量类型，而非笼统的类型错误。"""
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_yaml(tmp_path, "just a string\n"))
+        assert "用例文件顶层必须是数组" in str(exc_info.value)
+        assert "str" in str(exc_info.value)
+
+    def test_yaml_first_element_not_mapping_rejected(self, tmp_path: Path) -> None:
+        """列表首元素不是 mapping 时，应报出 1 起始的条目序号与实际类型。"""
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_yaml(tmp_path, "- 1\n- 2\n"))
+        assert "第 1 条用例必须是字典" in str(exc_info.value)
+        assert "int" in str(exc_info.value)
+
+    def test_json_non_mapping_element_reports_index(self, tmp_path: Path) -> None:
+        """元素序号应为 1 起始：第 2 个元素非法时报“第 2 条”，便于按序修正。"""
+        content = (
+            '[{"input": "1+1=?", "expected": {"type": "exact", "value": "2"}}, 42]'
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_json(tmp_path, content))
+        assert "第 2 条用例必须是字典" in str(exc_info.value)
+        assert "int" in str(exc_info.value)
+
+    def test_is_a_directory_error_mapped_to_loader_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """读取目录时抛出的 IsADirectoryError 应被映射为 LoaderError 并保留异常链。
+
+        该 OS 错误在 Windows 上表现为 PermissionError（已由
+        test_directory_path_rejected 覆盖），仅在 POSIX 上出现；此处定向构造
+        IsADirectoryError，使“路径是目录而非文件”这条错误映射在两个平台上都被验证。
+        """
+
+        def _fake_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            """模拟 Path.read_text 在目录上抛出 IsADirectoryError。"""
+            raise IsADirectoryError(f"模拟目录读取失败: {self}")
+
+        monkeypatch.setattr(Path, "read_text", _fake_read_text)
+        dir_path = tmp_path / "cases.yaml"
+        dir_path.mkdir()
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(dir_path)
+        assert "路径是目录而非文件" in str(exc_info.value)
+        # context 须精确携带坏入参路径
+        assert exc_info.value.context["file"] == str(dir_path)
+        assert exc_info.value.context["line"] is None
+        # 异常链保留原始 OS 错误，便于定位真实原因
+        assert isinstance(exc_info.value.__cause__, IsADirectoryError)
