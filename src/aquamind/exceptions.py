@@ -33,10 +33,22 @@ class AquaMindError(Exception):
         self.context: dict[str, Any] = context or {}
 
     def __str__(self) -> str:
-        """返回带上下文的错误描述。"""
+        """返回带上下文**键名**的错误描述（不渲染 context 的取值）。
+
+        context 的取值可能包含响应体、完整 URL 等敏感或冗长内容（服务端的错误
+        响应会回显用户 prompt）。一旦渲染进异常字符串，就会随 traceback、
+        logging.exception 一并进入日志与报告，构成数据泄露通道。
+
+        因此这里只输出键名以保留「有哪些上下文可用」这一排障信息，取值一律通过
+        ``exc.context["key"]`` 按需显式读取。
+
+        Returns:
+            str: 形如 ``"消息 (context keys: [k1, k2])"`` 的描述；context 为空时
+                直接返回消息本身。
+        """
         if self.context:
-            ctx_str = ", ".join(f"{k}={v}" for k, v in self.context.items())
-            return f"{self.message} (context: {ctx_str})"
+            keys = ", ".join(self.context.keys())
+            return f"{self.message} (context keys: [{keys}])"
         return self.message
 
     def __repr__(self) -> str:

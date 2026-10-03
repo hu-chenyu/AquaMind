@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -208,3 +209,22 @@ class TestLogLevelValidator:
         """校验器对 str 输入统一转大写，保留既有归一语义。"""
         assert Settings._uppercase_log_level("warning") == "WARNING"
         assert Settings._uppercase_log_level("DeBuG") == "DEBUG"
+
+
+class TestEnvFileCwdDocumented:
+    """测试 .env 解析口径已在文档中显式声明（P2-4）。
+
+    回归背景：``env_file=".env"`` 相对进程 CWD 解析，配置结果取决于执行目录。
+    本次不改变该默认行为（会破坏既有 .env 用法），改为在文档中明确声明。
+    """
+
+    def test_settings_docstring_declares_cwd_resolution(self) -> None:
+        """Settings 类 docstring 须说明 .env 按当前工作目录解析。"""
+        doc = inspect.getdoc(Settings) or ""
+        assert "当前工作目录" in doc
+        assert ".env" in doc
+
+    def test_load_config_docstring_declares_cwd_resolution(self) -> None:
+        """load_config 的 docstring 同样须声明该口径。"""
+        doc = inspect.getdoc(load_config) or ""
+        assert "当前工作目录" in doc

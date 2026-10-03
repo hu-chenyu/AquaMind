@@ -18,6 +18,11 @@ class Settings(BaseSettings):
 
     所有字段均有默认值，可通过 AQ_ 前缀环境变量覆盖。
     示例：AQ_LOG_LEVEL=DEBUG、AQ_DEFAULT_TIMEOUT=30
+
+    注意：``.env`` 文件按**当前工作目录（CWD）**解析，且每次实例化都会重新读取。
+    同一份代码在不同目录下执行会得到不同配置（如在 A 目录读到 ``.env``、在 B 目录
+    退回默认值），这一点在 CLI、CI 步骤与容器 entrypoint 中尤其容易被忽略。
+    需要确定性配置时，请显式设置 AQ_ 环境变量而非依赖 ``.env``。
     """
 
     model_config = SettingsConfigDict(
@@ -112,6 +117,9 @@ def load_config() -> Settings:
     """加载全局配置。
 
     读取顺序：环境变量（AQ_前缀）> .env文件 > 默认值。
+
+    其中 ``.env`` 是相对**当前工作目录（CWD）**解析的，因此配置结果依赖调用时的
+    工作目录；需要与目录无关的确定性配置时，请改用 AQ_ 环境变量。
 
     Returns:
         Settings: 加载并校验后的配置对象

@@ -327,3 +327,96 @@ class TestNonUtf8Encoding:
         cases = load_cases(_write_yaml(tmp_path, _SINGLE_YAML))
         assert len(cases) == 1
         assert cases[0].input == "1+1=?"
+
+
+class TestNonStringKeys:
+    """测试 YAML 非字符串键的拦截（P2-1）。
+
+    回归背景：``TestCase(**item)`` 展开要求键全为 str，YAML 允许数字/布尔键，
+    原实现直接展开会先抛 ``TypeError``，与 docstring 声明的 ``ValidationError`` 不符。
+    """
+
+    def test_non_string_key_rejected_as_loader_error(self, tmp_path: Path) -> None:
+        """整数键应抛 LoaderError，而非穿透契约的 TypeError。"""
+        content = (
+            '- input: "1+1=?"\n'
+            "  expected:\n"
+            "    type: exact\n"
+            '    value: "2"\n'
+            "  1: 坏键\n"
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_yaml(tmp_path, content))
+        message = str(exc_info.value)
+        # 消息须指出是哪条用例的哪个键，便于按序修正
+        assert "第 1 条用例" in message
+        assert "非字符串键" in message
+        assert "1" in message
+
+    def test_non_string_key_reports_its_index(self, tmp_path: Path) -> None:
+        """序号应为 1 起始：第 2 条用例含布尔键时须报“第 2 条”。"""
+        content = (
+            '- input: "x"\n'
+            "  expected:\n"
+            "    type: exact\n"
+            '    value: "2"\n'
+            "- input: y\n"
+            "  expected:\n"
+            "    type: exact\n"
+            '    value: "2"\n'
+            "  true: 坏键\n"
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(_write_yaml(tmp_path, content))
+        assert "第 2 条用例" in str(exc_info.value)
+
+    def test_string_extra_key_still_extra_forbidden(self, tmp_path: Path) -> None:
+        """字符串形式的未知键仍走 pydantic 的 extra_forbidden，不被新分支截胡。"""
+        content = (
+            '- input: "x"\n'
+            "  expected:\n"
+            "    type: exact\n"
+            '    value: "2"\n'
+            '  "1": 坏键\n'
+        )
+        with pytest.raises(ValidationError):
+            load_cases(_write_yaml(tmp_path, content))
+
+
+class TestUtf8BomCompatibility:
+    """测试 UTF-8 BOM 兼容（P2-7）。
+
+    回归背景：PyYAML 自带 BOM 处理而 ``json.loads`` 不容忍前导 ``\\ufeff``，
+    同一份逻辑内容的文件仅因扩展名不同而一个能加载、一个不能。
+    """
+
+    def test_json_with_bom_loads(self, tmp_path: Path) -> None:
+        """带 BOM 的 JSON 应与 YAML 一样正常加载（utf-8-sig 自动剥离 BOM）。"""
+        path = tmp_path / "cases.json"
+        path.write_bytes(b"\xef\xbb\xbf" + _SINGLE_JSON.encode("utf-8"))
+        cases = load_cases(path)
+        assert len(cases) == 1
+        assert cases[0].input == "1+1=?"
+
+    def test_yaml_with_bom_loads(self, tmp_path: Path) -> None:
+        """带 BOM 的 YAML 应正常加载（回归守卫：该行为修复前后一致）。"""
+        path = tmp_path / "cases.yaml"
+        path.write_bytes(b"\xef\xbb\xbf" + _SINGLE_YAML.encode("utf-8"))
+        cases = load_cases(path)
+        assert len(cases) == 1
+        assert cases[0].input == "1+1=?"
+
+    def test_plain_utf8_without_bom_unaffected(self, tmp_path: Path) -> None:
+        """无 BOM 的纯 UTF-8 文件行为不应被 utf-8-sig 改变。"""
+        cases = load_cases(_write_json(tmp_path, _SINGLE_JSON))
+        assert len(cases) == 1
+        assert cases[0].expected.value == "2"
+
+    def test_gbk_still_rejected_under_utf8_sig(self, tmp_path: Path) -> None:
+        """P1-1 不回归：utf-8-sig 对 GBK 仍抛 UnicodeDecodeError 并被包装。"""
+        path = tmp_path / "cases.yaml"
+        path.write_bytes(_GBK_YAML.encode("gbk"))
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(path)
+        assert "UTF-8" in str(exc_info.value)
+        assert exc_info.value.context["encoding"] == "utf-8"
