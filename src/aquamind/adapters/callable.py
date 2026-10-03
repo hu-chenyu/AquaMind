@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
+from typing import cast
 
 from ..exceptions import AdapterError
 from .base import AdapterResponse, BaseAdapter
@@ -55,7 +58,14 @@ class CallableAdapter(BaseAdapter):
                 },
             )
         try:
-            result = self.fn(messages)
+            if inspect.iscoroutinefunction(self.fn):
+                # 异步 SUT：直接 await。否则返回的是未 await 的协程，
+                # 会在归一化时报 ValidationError 并产生协程泄漏告警
+                result = await cast(Awaitable[str], self.fn(messages))
+            else:
+                # 同步 SUT：卸载到线程池。直接在协程内同步调用会阻塞事件循环，
+                # 使 asyncio.gather 的并发调用退化为串行，压测结果失真
+                result = await asyncio.to_thread(self.fn, messages)
             # 归一化同样纳入 try：fn 返回非 str 时 pydantic 校验失败，须一并包装
             return AdapterResponse(content=result, raw=result, metadata={"adapter": "callable"})
         except Exception as e:

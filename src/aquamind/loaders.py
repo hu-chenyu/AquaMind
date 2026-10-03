@@ -48,7 +48,10 @@ def load_cases(path: str | Path) -> list[TestCase]:
         )
 
     try:
-        content = file_path.read_text(encoding="utf-8")
+        # utf-8-sig 同时兼容「有 BOM」与「无 BOM」的纯 UTF-8 文件：YAML 侧 PyYAML
+        # 本就容忍 BOM，而 json.loads 不容忍，统一编码可消除两种格式的行为差异
+        # （BOM 本身是合法的 UTF-8 字符序列，剥离后不影响内容）。
+        content = file_path.read_text(encoding="utf-8-sig")
     except FileNotFoundError as e:
         raise _report_error(file_str, None, f"文件不存在: {file_str}") from e
     except PermissionError as e:
@@ -73,7 +76,20 @@ def load_cases(path: str | Path) -> list[TestCase]:
     else:
         raw_items = _parse_json(content, file_str)
 
-    return [TestCase(**item) for item in raw_items]
+    cases: list[TestCase] = []
+    for index, item in enumerate(raw_items):
+        # YAML 允许数字/布尔等非字符串键，而 TestCase(**item) 展开要求键全为 str，
+        # 否则会先抛 TypeError 走不到 pydantic 契约校验（与 docstring 声明不符）。
+        non_str_keys = [key for key in item if not isinstance(key, str)]
+        if non_str_keys:
+            raise _report_error(
+                file_str,
+                None,
+                f"第 {index + 1} 条用例包含非字符串键 {non_str_keys}："
+                "用例字段名必须是字符串",
+            )
+        cases.append(TestCase(**item))
+    return cases
 
 
 def _parse_yaml(content: str, file: str) -> list[dict[str, Any]]:
@@ -122,7 +138,7 @@ def _parse_json(content: str, file: str) -> list[dict[str, Any]]:
     return _ensure_case_list(data, file)
 
 
-def _ensure_case_list(data: Any, file: str) -> list[dict[str, Any]]:
+def _ensure_case_list(data: Any, file: str) -> list[dict[Any, Any]]:
     """校验解析结果必须是“非空的用例字典列表”（内部辅助）。
 
     Args:
@@ -130,7 +146,8 @@ def _ensure_case_list(data: Any, file: str) -> list[dict[str, Any]]:
         file: 文件路径（用于错误上下文）。
 
     Returns:
-        list[dict[str, Any]]: 校验通过的用例字典列表。
+        list[dict[Any, Any]]: 校验通过的用例字典列表。键标注为 ``Any`` 而非 ``str``：
+            YAML 允许数字/布尔等非字符串键，须交由调用方在展开前显式校验。
 
     Raises:
         LoaderError: 结果为 None/空列表（均视为空文件）或存在非字典元素时抛出。

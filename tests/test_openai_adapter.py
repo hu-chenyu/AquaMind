@@ -89,7 +89,12 @@ class TestSuccessfulCompletion:
         assert response.content == "你好，这是测试输出"
         # raw 保留完整响应 JSON，便于后续录制/回放与排障
         assert response.raw == _SUCCESS_PAYLOAD
-        assert set(response.metadata) == {"model", "usage", "latency_ms"}
+        assert set(response.metadata) == {
+            "model",
+            "usage",
+            "latency_ms",
+            "latency_includes_connection",
+        }
 
     def test_metadata_carries_usage_and_model(self, success_transport: httpx.MockTransport) -> None:
         """metadata 应含响应中的 model 与 usage 三项 token 统计。"""
@@ -199,8 +204,9 @@ class TestHttpAndNetworkErrors:
                 asyncio.run(_adapter(_status_transport(status_code, body)).acomplete(_MESSAGES))
             assert str(status_code) in str(exc_info.value)
             assert exc_info.value.context["status_code"] == status_code
-            # 响应体片段应进入消息，便于定位服务端返回的错误详情
-            assert body[:500] in str(exc_info.value)
+            # 响应体片段只放 context（异常字符串只渲染键名，避免敏感数据进日志），
+            # 排障时经 exc.context 显式读取
+            assert body[:500] in exc_info.value.context["response_body"]
 
     def test_connect_error_wrapped_with_cause(self) -> None:
         """连接失败应包装为 AdapterError，并保留原始异常链。"""
@@ -346,3 +352,96 @@ class TestHttpErrorBodyRedaction:
         assert "600" in exc_info.value.message
         # context 中的响应体片段仍受 _ERROR_BODY_PREVIEW 上限保护
         assert len(exc_info.value.context["response_body"]) == 500
+
+    def test_response_body_absent_from_exception_string(self) -> None:
+        """敏感响应体不得出现在 str(exc) 中（依赖 __str__ 只渲染 context 键名）。
+
+        str(exc) 会进入 traceback 与 logging.exception，是数据外泄的实际通道。
+        """
+        secret = "用户隐私数据-身份证110101199001011234"
+
+        def _echo(request: httpx.Request) -> httpx.Response:
+            body = request.content.decode("utf-8", "replace")
+            return httpx.Response(500, text=f'{{"error":"rejected: {body}"}}')
+
+        adapter = _adapter(httpx.MockTransport(_echo))
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(adapter.acomplete([{"role": "user", "content": secret}]))
+        # 键名可见、取值不可见
+        assert "response_body" in str(exc_info.value)
+        assert secret not in str(exc_info.value)
+        # 取值仍可通过 context 显式取用
+        assert secret in exc_info.value.context["response_body"]
+
+
+class TestChoicesErrorClassification:
+    """测试 choices 四种根因的差异化报错（P2-2 + P2-6）。
+
+    回归背景：原实现把「字段缺失 / 显式 null / 类型错误 / 空列表」以及
+    「choices[0] 不是对象」合并为少数几条消息，且不带实际类型，排障时无法区分
+    端点侧到底是哪种 bug。
+    """
+
+    def test_choices_missing(self) -> None:
+        """choices 字段缺失：消息点名字段，context 记录 present=False。"""
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_payload_transport({"model": "m"})).acomplete(_MESSAGES))
+        assert "缺少 choices" in str(exc_info.value)
+        assert exc_info.value.context["present"] is False
+
+    def test_choices_null(self) -> None:
+        """choices 显式为 null：与「字段缺失」区分开。"""
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_payload_transport({"choices": None})).acomplete(_MESSAGES))
+        assert "null" in str(exc_info.value)
+        assert exc_info.value.context["actual_type"] == "NoneType"
+
+    def test_choices_wrong_type(self) -> None:
+        """choices 类型错误（如 dict）：消息与 context 均带实际类型名。"""
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_payload_transport({"choices": {}})).acomplete(_MESSAGES))
+        assert "类型错误" in str(exc_info.value)
+        assert "dict" in str(exc_info.value)
+        assert exc_info.value.context["actual_type"] == "dict"
+
+    def test_choices_empty_list(self) -> None:
+        """choices 为空列表：单独措辞，可与「类型错误」区分。"""
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_payload_transport({"choices": []})).acomplete(_MESSAGES))
+        assert "空列表" in str(exc_info.value)
+        assert exc_info.value.context["actual_type"] == "list"
+
+    def test_first_choice_not_object(self) -> None:
+        """choices[0] 不是对象：应报「不是对象」而非误导性的「缺少 message」。"""
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_payload_transport({"choices": ["oops"]})).acomplete(_MESSAGES))
+        message = str(exc_info.value)
+        assert "不是对象" in message
+        assert "缺少 choices[0].message" not in message
+        # 实际类型必须记录，供端点兼容性排查
+        assert exc_info.value.context["actual_type"] == "str"
+
+    def test_first_choice_missing_message_distinct_from_not_object(self) -> None:
+        """choices[0] 是对象但缺 message：与「不是对象」保持两类区分。"""
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_payload_transport({"choices": [{"index": 0}]})).acomplete(_MESSAGES))
+        assert "缺少 choices[0].message" in str(exc_info.value)
+        assert exc_info.value.context["actual_type"] == "NoneType"
+
+
+class TestLatencyCalibration:
+    """测试延迟口径声明（P2-3 第一步）。"""
+
+    def test_metadata_declares_connection_included(
+        self, success_transport: httpx.MockTransport
+    ) -> None:
+        """metadata 应显式标识 latency_ms 含连接建立开销，避免被误当服务端耗时。"""
+        response = asyncio.run(_adapter(success_transport).acomplete(_MESSAGES))
+        assert response.metadata["latency_includes_connection"] is True
+        assert isinstance(response.metadata["latency_ms"], float)
+
+    def test_latency_calibration_documented(self) -> None:
+        """acomplete 的 docstring 必须写明 latency_ms 为端到端口径。"""
+        doc = OpenAIAdapter.acomplete.__doc__ or ""
+        assert "端到端" in doc
+        assert "TLS 握手" in doc

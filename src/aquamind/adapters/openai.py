@@ -76,7 +76,13 @@ class OpenAIAdapter(BaseAdapter):
 
         Returns:
             AdapterResponse: content 为模型输出文本，raw 为完整响应 JSON，
-                metadata 含 model/usage/latency_ms。
+                metadata 含 model/usage/latency_ms/latency_includes_connection。
+
+                口径说明：``latency_ms`` 为**端到端口径**，从发请求前计时到响应
+                读回，含 TCP 建连与 TLS 握手等客户端侧开销（本阶段每次调用新建
+                AsyncClient，连接不可复用），**不可**直接当作服务端处理耗时。
+                ``latency_includes_connection=True`` 即为该口径的显式标识，
+                供后续负载引擎选择正确算法；连接复用落地后需同步更新该口径。
 
         Raises:
             AdapterError: 请求流式、HTTP 非 2xx、网络异常或响应结构不符合预期时抛出。
@@ -118,10 +124,9 @@ class OpenAIAdapter(BaseAdapter):
         if not 200 <= response.status_code < 300:
             # 消息只保留状态码与响应体长度：部分网关/反代会在错误响应体里回显请求体，
             # 直接把响应体拼进 message 会让用户 prompt 随异常进入日志与报告。
-            # 排障所需的响应体片段改放 context.response_body，由调用方按需取用。
-            # 已知残留：AquaMindError.__str__ 会渲染 context 的全部取值，故响应体片段
-            # 仍会出现在 str(exc) 中。彻底消除需在异常基类做脱敏，属独立改动，
-            # 不在本次修复范围内（勿据此认为本分支已完全阻断泄露）。
+            # 排障所需的响应体片段改放 context.response_body，由调用方按需取用；
+            # AquaMindError.__str__ 只渲染 context 的键名，故该片段不会出现在
+            # str(exc) / traceback / logging.exception 中。
             raise AdapterError(
                 message=(
                     f"OpenAI API 返回 HTTP {response.status_code}"
@@ -164,17 +169,51 @@ class OpenAIAdapter(BaseAdapter):
                 context={"adapter": "openai", "actual_type": type(data).__name__},
             )
         choices = data.get("choices")
-        if not isinstance(choices, list) or not choices:
+        # 四种根因（字段缺失 / 显式 null / 类型错误 / 空列表）对应端点侧不同的 bug，
+        # 合并成一条消息会丢失诊断能力，故逐类区分并在 context 记录实际类型
+        if "choices" not in data:
             raise AdapterError(
-                message="OpenAI API 响应缺少 choices 或 choices 为空",
-                context={"adapter": "openai"},
+                message="OpenAI API 响应缺少 choices 字段",
+                context={"adapter": "openai", "present": False},
+            )
+        if choices is None:
+            raise AdapterError(
+                message="OpenAI API 响应 choices 为 null",
+                context={"adapter": "openai", "present": True, "actual_type": "NoneType"},
+            )
+        if not isinstance(choices, list):
+            raise AdapterError(
+                message=(
+                    "OpenAI API 响应 choices 类型错误，"
+                    f"实际类型: {type(choices).__name__}"
+                ),
+                context={
+                    "adapter": "openai",
+                    "present": True,
+                    "actual_type": type(choices).__name__,
+                },
+            )
+        if not choices:
+            raise AdapterError(
+                message="OpenAI API 响应 choices 为空列表",
+                context={"adapter": "openai", "present": True, "actual_type": "list"},
             )
         first = choices[0]
-        message = first.get("message") if isinstance(first, dict) else None
+        # choices[0] 不是对象时，报「不是对象」而非「缺少 message」：
+        # 后者会把排查方向误导到根本不存在的 message 字段上
+        if not isinstance(first, dict):
+            raise AdapterError(
+                message=(
+                    "OpenAI API 响应 choices[0] 不是对象，"
+                    f"实际类型: {type(first).__name__}"
+                ),
+                context={"adapter": "openai", "actual_type": type(first).__name__},
+            )
+        message = first.get("message")
         if not isinstance(message, dict):
             raise AdapterError(
                 message="OpenAI API 响应缺少 choices[0].message",
-                context={"adapter": "openai"},
+                context={"adapter": "openai", "actual_type": type(message).__name__},
             )
         content = message.get("content")
         if not isinstance(content, str):
@@ -188,5 +227,8 @@ class OpenAIAdapter(BaseAdapter):
             "model": reported_model if isinstance(reported_model, str) else self._model,
             "usage": data.get("usage"),
             "latency_ms": latency_ms,
+            # 口径标识：latency_ms 为端到端口径，含 TCP 建连与 TLS 握手等客户端侧开销
+            # （本阶段每次调用新建 AsyncClient，连接不可复用），非纯服务端处理耗时
+            "latency_includes_connection": True,
         }
         return AdapterResponse(content=content, raw=data, metadata=metadata)

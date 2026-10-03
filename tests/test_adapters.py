@@ -178,3 +178,72 @@ class TestBaseAdapterDefaultImplementation:
         """acomplete 须同时是抽象方法与协程函数，保证子类沿用异步签名。"""
         assert BaseAdapter.acomplete.__isabstractmethod__ is True
         assert asyncio.iscoroutinefunction(BaseAdapter.acomplete)
+
+
+class TestCallableAdapterConcurrency:
+    """测试同步 fn 卸载到线程池、异步 fn 直接 await（P2-5 + P3-1）。
+
+    回归背景：原实现在协程内直接同步调用 ``self.fn(messages)``，会阻塞事件循环，
+    使 ``asyncio.gather`` 的并发调用退化为串行——对一个以并发压测为目标的工具
+    而言会让压测结果彻底失真。
+    """
+
+    def test_sync_fn_does_not_block_event_loop(self) -> None:
+        """4 个各 sleep 100ms 的同步 fn 并发执行，总耗时应远小于串行的 400ms。"""
+        import time
+
+        def _slow(messages: list[dict[str, str]]) -> str:
+            """模拟带延迟的本地 SUT。"""
+            time.sleep(0.1)
+            return "ok"
+
+        adapter = CallableAdapter(_slow)
+
+        async def _drive() -> None:
+            start = time.perf_counter()
+            results = await asyncio.gather(
+                *(adapter.acomplete(_MESSAGES) for _ in range(4)),
+            )
+            elapsed = time.perf_counter() - start
+            assert all(r.content == "ok" for r in results)
+            # 串行约 0.4s，并发约 0.1s；取 0.3s 为界以容忍 CI 抖动
+            assert elapsed < 0.3, f"同步 fn 疑似阻塞事件循环，实际耗时 {elapsed:.3f}s"
+
+        asyncio.run(_drive())
+
+    def test_async_fn_is_awaited(self) -> None:
+        """传入 async fn 应被直接 await 并正常返回，不再报 ValidationError。"""
+
+        async def _async_sut(messages: list[dict[str, str]]) -> str:
+            """异步本地 SUT。"""
+            await asyncio.sleep(0)
+            return "异步输出"
+
+        adapter = CallableAdapter(_async_sut)  # type: ignore[arg-type]
+        response = asyncio.run(adapter.acomplete(_MESSAGES))
+        assert response.content == "异步输出"
+
+    def test_async_fn_emits_no_never_awaited_warning(self, recwarn: pytest.WarningsRecorder) -> None:
+        """async fn 路径不得产生“协程未 await”的 RuntimeWarning（无协程泄漏）。"""
+
+        async def _async_sut(messages: list[dict[str, str]]) -> str:
+            """异步本地 SUT。"""
+            return "异步输出"
+
+        adapter = CallableAdapter(_async_sut)  # type: ignore[arg-type]
+        asyncio.run(adapter.acomplete(_MESSAGES))
+        leaked = [w for w in recwarn.list if "never awaited" in str(w.message)]
+        assert leaked == [], f"检测到未 await 的协程: {[str(w.message) for w in leaked]}"
+
+    def test_async_fn_exception_wrapped(self) -> None:
+        """async fn 抛出的异常同样应被包装为 AdapterError 并保留异常链。"""
+
+        async def _boom(messages: list[dict[str, str]]) -> str:
+            """模拟异步 SUT 故障。"""
+            raise ValueError("异步后端故障")
+
+        adapter = CallableAdapter(_boom)  # type: ignore[arg-type]
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(adapter.acomplete(_MESSAGES))
+        assert exc_info.value.context["error_type"] == "ValueError"
+        assert isinstance(exc_info.value.__cause__, ValueError)
