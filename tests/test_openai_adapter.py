@@ -269,3 +269,80 @@ class TestResponseValidation:
         with pytest.raises(AdapterError) as exc_info:
             asyncio.run(_adapter(_payload_transport(payload)).acomplete(_MESSAGES))
         assert "content" in str(exc_info.value)
+
+
+class TestBaseUrlValidation:
+    """测试 base_url 的构造期校验与请求期异常包装。
+
+    回归背景（P1-2）：``httpx.InvalidURL`` 直接继承 ``Exception`` 而非
+    ``httpx.HTTPError``，原实现的 ``except httpx.HTTPError`` 捕获不到它，
+    非法 base_url 会以裸 httpx 异常击穿「调用方只需 except AdapterError」的契约。
+    """
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        ["", "   ", "ht!tp://x", "api.example.com/v1", "ftp://x/v1"],
+    )
+    def test_invalid_base_url_rejected_at_construction(self, bad_url: str) -> None:
+        """空串/空白/缺协议/非 http(s) 协议的 base_url 应在构造期即抛 AdapterError。"""
+        with pytest.raises(AdapterError) as exc_info:
+            OpenAIAdapter(bad_url)
+        # 错误须直接点名 base_url，便于用户改配置
+        assert "base_url" in str(exc_info.value)
+        assert exc_info.value.context["base_url"] == bad_url
+        assert exc_info.value.context["adapter"] == "openai"
+
+    def test_valid_base_url_still_reaches_request(self) -> None:
+        """合法 base_url（含末尾斜杠）不应被新增校验误伤，仍能完成一次正常调用。"""
+        adapter = OpenAIAdapter(f"{_BASE_URL}/", transport=_payload_transport(_SUCCESS_PAYLOAD))
+        response = asyncio.run(adapter.acomplete(_MESSAGES))
+        assert response.content == "你好，这是测试输出"
+
+    def test_invalid_url_wrapped_at_request_time(self) -> None:
+        """IPv6 语法非法的 base_url 在请求期抛 InvalidURL，应被包装为 AdapterError。
+
+        该 base_url 以 http:// 开头、能通过构造期校验，错误只在真正建请求时才暴露，
+        因此请求期的宽捕获是不可省略的第二道防线。修复前此处抛出裸
+        ``httpx.InvalidURL``，``pytest.raises(AdapterError)`` 匹配不到而失败。
+        """
+        adapter = OpenAIAdapter("http://[::1", transport=_status_transport(200, "{}"))
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(adapter.acomplete(_MESSAGES))
+        assert exc_info.value.context["error_type"] == "InvalidURL"
+        # 异常链保留原始 httpx 异常
+        assert isinstance(exc_info.value.__cause__, httpx.InvalidURL)
+
+
+class TestHttpErrorBodyRedaction:
+    """测试 HTTP 错误消息脱敏。
+
+    回归背景（P1-3）：原实现把响应体片段直接拼进异常消息，而部分网关/反代会
+    在错误响应里回显请求体，导致用户 prompt 随异常进入日志与报告。
+    """
+
+    def test_error_message_excludes_echoed_prompt(self) -> None:
+        """服务端回显请求体时，异常消息不得包含用户 prompt，响应体应转入 context。"""
+
+        def _echo(request: httpx.Request) -> httpx.Response:
+            body = request.content.decode("utf-8", "replace")
+            return httpx.Response(500, text=f'{{"error":"rejected: {body}"}}')
+
+        secret = "用户隐私数据-身份证110101199001011234"
+        with pytest.raises(AdapterError) as exc_info:
+            adapter = _adapter(httpx.MockTransport(_echo))
+            asyncio.run(adapter.acomplete([{"role": "user", "content": secret}]))
+        # 消息只保留状态码与响应体长度，不得携带用户输入
+        assert secret not in exc_info.value.message
+        assert "500" in exc_info.value.message
+        # 排障所需的响应体片段仍可通过 context 按需取用
+        assert exc_info.value.context["status_code"] == 500
+        assert secret in exc_info.value.context["response_body"]
+
+    def test_error_message_reports_body_length(self) -> None:
+        """消息应带响应体长度，便于判断片段是否被截断。"""
+        body = "x" * 600
+        with pytest.raises(AdapterError) as exc_info:
+            asyncio.run(_adapter(_status_transport(500, body)).acomplete(_MESSAGES))
+        assert "600" in exc_info.value.message
+        # context 中的响应体片段仍受 _ERROR_BODY_PREVIEW 上限保护
+        assert len(exc_info.value.context["response_body"]) == 500

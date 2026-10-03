@@ -55,6 +55,19 @@ _MULTI_JSON = """\
 ]
 """
 
+# 非 UTF-8 编码回归用例（P1-1）：以 GBK 写入后，read_text(encoding="utf-8") 必失败。
+# 内容取中文用例，确保 GBK 与 UTF-8 字节序列必然不同。
+_GBK_YAML = """\
+- input: "天空是什么颜色？"
+  expected:
+    type: contains
+    value: "蓝"
+"""
+
+_GBK_JSON = """\
+[{"input": "天空是什么颜色？", "expected": {"type": "contains", "value": "蓝"}}]
+"""
+
 
 def _write_yaml(tmp_path: Path, content: str) -> Path:
     """写入 YAML 临时文件并返回路径。"""
@@ -262,3 +275,55 @@ class TestCaseListShapeValidation:
         assert exc_info.value.context["line"] is None
         # 异常链保留原始 OS 错误，便于定位真实原因
         assert isinstance(exc_info.value.__cause__, IsADirectoryError)
+
+
+class TestNonUtf8Encoding:
+    """测试非 UTF-8 编码文件的拦截。
+
+    回归背景（P1-1）：``read_text(encoding="utf-8")`` 在文件不是 UTF-8 时抛
+    ``UnicodeDecodeError``，而该异常既非 OSError 也非解析错误，原实现未捕获，
+    会绕过 ``LoaderError`` 契约。中文 Windows 默认编码为 GBK/GB18030，
+    该输入在本项目场景中完全现实。
+    """
+
+    def test_gbk_yaml_rejected_with_friendly_message(self, tmp_path: Path) -> None:
+        """GBK 编码的 YAML 用例文件应抛 LoaderError，并提示改用 UTF-8。
+
+        修复前此处会抛出裸 ``UnicodeDecodeError``，``pytest.raises(LoaderError)``
+        匹配不到而直接失败——即本测试在修复撤销时必然变红。
+        """
+        path = tmp_path / "cases.yaml"
+        path.write_bytes(_GBK_YAML.encode("gbk"))
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(path)
+        # 消息须直接告诉用户改用 UTF-8，而不是暴露编解码堆栈
+        assert "UTF-8" in str(exc_info.value)
+        assert "GBK" in str(exc_info.value)
+
+    def test_gbk_json_rejected_with_friendly_message(self, tmp_path: Path) -> None:
+        """GBK 编码的 JSON 用例文件同样应被包装为 LoaderError（读文件阶段先于解析失败）。"""
+        path = tmp_path / "cases.json"
+        path.write_bytes(_GBK_JSON.encode("gbk"))
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(path)
+        assert "UTF-8" in str(exc_info.value)
+
+    def test_non_utf8_error_carries_context_and_cause(self, tmp_path: Path) -> None:
+        """编码错误须携带 encoding 上下文，并保留原始异常链供定位。"""
+        path = tmp_path / "cases.yaml"
+        path.write_bytes(_GBK_YAML.encode("gbk"))
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(path)
+        # context 携带文件路径与期望编码，便于调用方给出可操作提示
+        assert exc_info.value.context["file"] == str(path)
+        assert exc_info.value.context["encoding"] == "utf-8"
+        # 编码问题无法定位到具体行，line 应为 None 而非误报
+        assert exc_info.value.context["line"] is None
+        # 异常链保留原始解码异常
+        assert isinstance(exc_info.value.__cause__, UnicodeDecodeError)
+
+    def test_utf8_file_unaffected(self, tmp_path: Path) -> None:
+        """合法 UTF-8 文件不应被新增的编码校验误伤。"""
+        cases = load_cases(_write_yaml(tmp_path, _SINGLE_YAML))
+        assert len(cases) == 1
+        assert cases[0].input == "1+1=?"

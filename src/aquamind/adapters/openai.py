@@ -38,12 +38,25 @@ class OpenAIAdapter(BaseAdapter):
         """初始化适配器。
 
         Args:
-            base_url: 端点根地址（如 https://api.openai.com/v1），末尾斜杠会被归一。
+            base_url: 端点根地址（如 https://api.openai.com/v1），末尾斜杠会被归一；
+                必须非空且以 http:// 或 https:// 开头。
             api_key: API 密钥；None 或空串表示端点无需鉴权。
             model: 模型名，随每次请求发送。
             timeout: 请求超时秒数，默认 60。
             transport: 可选 httpx 传输层（测试注入 MockTransport 用），默认用 httpx 默认传输。
+
+        Raises:
+            AdapterError: base_url 为空或协议不受支持时抛出。构造期即失败，
+                避免配置错误推迟到请求期并以 httpx 原生异常的形式暴露给调用方。
         """
+        if not base_url or not base_url.startswith(("http://", "https://")):
+            raise AdapterError(
+                message=(
+                    "OpenAIAdapter base_url 必须非空且以 http:// 或 https:// 开头，"
+                    f"当前值: {base_url!r}"
+                ),
+                context={"adapter": "openai", "base_url": base_url},
+            )
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
@@ -87,8 +100,15 @@ class OpenAIAdapter(BaseAdapter):
                 transport=self._transport,
             ) as client:
                 response = await client.post(url, json=payload, headers=headers)
-        except httpx.HTTPError as exc:
-            # 网络层异常（连接失败/超时等）统一包装，保留原始异常链
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as exc:
+            # 网络层异常（连接失败/超时等）统一包装，保留原始异常链。
+            # httpx.InvalidURL 直接继承 Exception（不是 HTTPError 子类），非法 base_url
+            # 会在请求构造期抛出它，必须显式列入才能守住「调用方只需 except
+            # AdapterError」的契约；ValueError 覆盖请求构造期的参数类错误
+            # （含自定义 transport 下的 URL 解析失败）。
+            # 捕获范围刻意限定在这一次 HTTP 调用内；asyncio.CancelledError /
+            # KeyboardInterrupt / SystemExit 均继承 BaseException，不会被误捕，
+            # 任务取消与中断语义保持原样。
             raise AdapterError(
                 message=f"OpenAI API 请求失败: {type(exc).__name__}",
                 context={"adapter": "openai", "url": url, "error_type": type(exc).__name__},
@@ -96,15 +116,22 @@ class OpenAIAdapter(BaseAdapter):
         latency_ms = round((time.perf_counter() - start) * 1000, 3)
 
         if not 200 <= response.status_code < 300:
+            # 消息只保留状态码与响应体长度：部分网关/反代会在错误响应体里回显请求体，
+            # 直接把响应体拼进 message 会让用户 prompt 随异常进入日志与报告。
+            # 排障所需的响应体片段改放 context.response_body，由调用方按需取用。
+            # 已知残留：AquaMindError.__str__ 会渲染 context 的全部取值，故响应体片段
+            # 仍会出现在 str(exc) 中。彻底消除需在异常基类做脱敏，属独立改动，
+            # 不在本次修复范围内（勿据此认为本分支已完全阻断泄露）。
             raise AdapterError(
                 message=(
-                    f"OpenAI API 返回 HTTP {response.status_code}: "
-                    f"{response.text[:_ERROR_BODY_PREVIEW]}"
+                    f"OpenAI API 返回 HTTP {response.status_code}"
+                    f"（响应体 {len(response.text)} 字符，详见 context.response_body）"
                 ),
                 context={
                     "adapter": "openai",
                     "url": url,
                     "status_code": response.status_code,
+                    "response_body": response.text[:_ERROR_BODY_PREVIEW],
                 },
             )
 

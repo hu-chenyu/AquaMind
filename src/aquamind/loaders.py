@@ -32,7 +32,8 @@ def load_cases(path: str | Path) -> list[TestCase]:
         list[TestCase]: 通过 TestCase 契约校验的非空用例列表。
 
     Raises:
-        LoaderError: 扩展名不支持、文件不存在、不可读或路径是目录、解析失败、文件为空时抛出。
+        LoaderError: 扩展名不支持、文件不存在、不可读、路径是目录、编码不是 UTF-8、
+            解析失败或文件为空时抛出。
         ValidationError: 用例字段不符合 TestCase 契约时由 pydantic 抛出，本函数不捕获。
     """
     file_path = Path(path)
@@ -54,6 +55,18 @@ def load_cases(path: str | Path) -> list[TestCase]:
         raise _report_error(file_str, None, f"文件不可读: {file_str}") from e
     except IsADirectoryError as e:
         raise _report_error(file_str, None, f"路径是目录而非文件: {file_str}") from e
+    except UnicodeDecodeError as e:
+        # 编码不符（如中文 Windows 默认的 GBK/GB18030）抛 UnicodeDecodeError，
+        # 它既非 OSError 也非 YAML/JSON 解析错误，必须显式包装：否则调用方
+        # 按契约只捕获 LoaderError 时会被击穿，只能拿到无法定位的编解码堆栈。
+        encoding_error = _report_error(
+            file_str,
+            None,
+            "文件不是合法的 UTF-8 文本（可能使用了 GBK 等其他编码），请以 UTF-8 格式重新保存",
+        )
+        # _report_error 统一填充 file/line/msg，编码信息在此补充
+        encoding_error.context["encoding"] = "utf-8"
+        raise encoding_error from e
 
     if suffix in _YAML_SUFFIXES:
         raw_items = _parse_yaml(content, file_str)
