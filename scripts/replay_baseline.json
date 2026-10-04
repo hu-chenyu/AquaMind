@@ -1,0 +1,131 @@
+{
+  "generated_at": "2026-10-04T05:00:57.717566+00:00",
+  "task": "M1-D06a VCR 文本录制回放一致率基线",
+  "scope": "文本层面（请求指纹/响应体还原精度）；timing 时序指标待 M1-D06b/D6c 补充",
+  "environment": {
+    "python": "3.11.9",
+    "platform": "Windows"
+  },
+  "summary": {
+    "recorded_requests": 8,
+    "replay_succeeded": 8,
+    "unmatched_requests": 0,
+    "status_code_match_rate": 1.0,
+    "body_match_rate": 1.0,
+    "text_match_rate": 1.0,
+    "request_hash_stability_rate": 1.0,
+    "hash_length": 16
+  },
+  "hash_cost": {
+    "iterations_per_case": 100,
+    "total_measured_calls": 800,
+    "avg_compute_ms": 0.005,
+    "max_compute_ms": 0.0068
+  },
+  "cases": [
+    {
+      "index": 1,
+      "label": "GET 无请求体",
+      "method": "GET",
+      "matched": true,
+      "request_hash": "40e8ac3f4b79037f",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.004
+    },
+    {
+      "index": 2,
+      "label": "POST 中文 body",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "ee6f8b2478f448c0",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0053
+    },
+    {
+      "index": 3,
+      "label": "POST 英文 body",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "9d619eb3b3de0d09",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0046
+    },
+    {
+      "index": 4,
+      "label": "POST 中文 + emoji body（带 authorization）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "2017f8a4ec672ed7",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0068
+    },
+    {
+      "index": 5,
+      "label": "POST 大 token 预算（带 x-api-key）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "45baa86254609da0",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0059
+    },
+    {
+      "index": 6,
+      "label": "GET 中文查询串（bytes 响应体）",
+      "method": "GET",
+      "matched": true,
+      "request_hash": "072ab104078f5977",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.004
+    },
+    {
+      "index": 7,
+      "label": "DELETE 无响应体",
+      "method": "DELETE",
+      "matched": true,
+      "request_hash": "2c659f8e9e98043e",
+      "recorded_status_code": 204,
+      "replayed_status_code": 204,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.004
+    },
+    {
+      "index": 8,
+      "label": "POST 非 2xx 响应",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "f52784208caf8db0",
+      "recorded_status_code": 503,
+      "replayed_status_code": 503,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0052
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json",
+    "authorization": "sha256:e9d13b66d7bb7e7e"
+  },
+  "request_body": "{\"messages\": [{\"content\": \"请用一句话介绍你自己\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
+  "response_status_code": 200,
+  "response_headers": {
+    "Content-Type": "application/json"
+  },
+  "response_body": "{\"choices\": [{\"index\": 0, \"message\": {\"content\": \"我是一个演示用的模型。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"usage\": {\"completion_tokens\": 12, \"prompt_tokens\": 18, \"total_tokens\": 30}}",
+  "request_hash": "4c289c1a45b66aba",
+  "recorded_at": "2026-10-04T05:00:57.404857+00:00"
+}
