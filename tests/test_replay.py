@@ -1,8 +1,8 @@
 """replay 模块单元测试。
 
 覆盖：Cassette 契约、request_hash 稳定性与版本校验、record 落盘、
-find_match 精确匹配（无匹配/损坏/指纹变更）、play 还原、ReplayedResponse
-读取面（text/content/json）、异常消息脱敏。
+find_match 精确匹配（无匹配/损坏/指纹变更）、format_version 前向兼容闸口、
+play 还原、ReplayedResponse 读取面（text/content/json）、异常消息脱敏。
 
 所有用例只用 tmp_path 构造临时 cassette 目录，不触达任何真实 API（CI 零 key）。
 """
@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from aquamind.exceptions import ReplayError
 from aquamind.replay import (
+    CURRENT_FORMAT_VERSION,
     Cassette,
     ReplayedResponse,
     RequestInfo,
@@ -310,6 +311,14 @@ class TestFindMatch:
             Cassette.compute_request_hash(request)
         )
 
+    def test_non_object_json_raises(self, tmp_path: Path) -> None:
+        """顶层不是 JSON 对象的 cassette（如写成数组）须报契约错而非崩溃。"""
+        request = _make_request()
+        path = Path(record(request, _make_response(), tmp_path))
+        _write_raw(path, "[1, 2, 3]")
+        with pytest.raises(ReplayError, match="字段不符合 Cassette 契约"):
+            find_match(request, tmp_path)
+
     def test_corrupted_json_raises(self, tmp_path: Path) -> None:
         """非法 JSON 必须报「文件损坏」，而不是把 JSONDecodeError 泄漏出去。"""
         request = _make_request()
@@ -405,6 +414,70 @@ class TestPlayAndReplayRequest:
         assert play(cassette).json() == {"version": 2}
         # 同一指纹只有一个文件，不留歧义副本
         assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+class TestFormatVersion:
+    """测试 cassette 格式版本字段的前向兼容闸口。
+
+    背景：Cassette 是 extra="forbid"。M1-D06b 给 cassette 增加 timing 字段后，
+    旧版本代码读到新文件时，pydantic 会先因未知字段报「字段不符合契约」——
+    把「代码太旧」说成「文件损坏」，排障方向从第一步就错。format_version
+    负责把这两类根因分开。
+    """
+
+    def test_current_format_version_constant(self) -> None:
+        """本模块支持的格式版本号应为 1（D6b 引入 timing 时递增到 2）。"""
+        assert CURRENT_FORMAT_VERSION == 1
+
+    def test_recorded_cassette_has_format_version(self, tmp_path: Path) -> None:
+        """录制产出的 cassette 必须显式带上当前格式版本号。"""
+        path = Path(record(_make_request(), _make_response(), tmp_path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["format_version"] == CURRENT_FORMAT_VERSION
+
+    def test_old_cassette_without_format_version_loads(self, tmp_path: Path) -> None:
+        """缺 format_version 的旧 cassette 应按 v1 正常加载并可回放（向后兼容）。"""
+        request = _make_request()
+        path = Path(record(request, _make_response(), tmp_path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        del payload["format_version"]
+        _write_raw(path, json.dumps(payload, ensure_ascii=False))
+
+        cassette = find_match(request, tmp_path)
+        assert cassette is not None
+        # 缺字段时取默认值 1，而不是报错
+        assert cassette.format_version == 1
+        assert play(cassette).status_code == 200
+
+    def test_format_version_too_new_raises(self, tmp_path: Path) -> None:
+        """声明版本高于当前支持的 cassette 必须报「版本过新」，而非「文件损坏」。"""
+        request = _make_request()
+        path = Path(record(request, _make_response(), tmp_path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["format_version"] = 999
+        _write_raw(path, json.dumps(payload, ensure_ascii=False))
+
+        with pytest.raises(ReplayError, match="版本过新") as excinfo:
+            find_match(request, tmp_path)
+        assert excinfo.value.context["cassette_version"] == 999
+        assert excinfo.value.context["supported_version"] == CURRENT_FORMAT_VERSION
+
+    def test_version_gate_beats_contract_error(self, tmp_path: Path) -> None:
+        """新版 cassette 携带未知字段时，仍须报「版本过新」而不是「字段不符合契约」。
+
+        这条是闸口位置的关键证据：版本检查若放在 model_validate 之后，
+        extra="forbid" 会先因新字段失败，这条断言就会拿到「字段不符合契约」。
+        """
+        request = _make_request()
+        path = Path(record(request, _make_response(), tmp_path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["format_version"] = 2
+        # 模拟 D6b 引入的 timing 字段（当前代码尚不认识）
+        payload["timing"] = [{"chunk_index": 0, "delay_ms": 12.5}]
+        _write_raw(path, json.dumps(payload, ensure_ascii=False))
+
+        with pytest.raises(ReplayError, match="版本过新"):
+            find_match(request, tmp_path)
 
 
 class TestReplayedResponse:

@@ -8,6 +8,10 @@
 结构接收；未携带新字段的旧 cassette 仍按瞬时回放处理。因此这里不用任何
 写死的字段清单或「多字段一张表」的封闭结构。
 
+版本兼容由 ``format_version`` 字段承担：该字段缺失时按 v1 解析（向后兼容），
+高于 ``CURRENT_FORMAT_VERSION`` 时直接报「版本过新」并提示升级（向前不兼容），
+从而把「文件太新」与「文件损坏」这两类根因区分开。
+
 指纹与脱敏约定：
     ``request_hash`` 由「方法 + URL + 关键请求头（排序后）+ 请求体」规范化后的
     SHA-256 前 16 位十六进制串构成，是判定「同一个请求」的稳定依据，同时充当
@@ -43,6 +47,11 @@ _SENSITIVE_HEADERS: frozenset[str] = frozenset({"authorization", "x-api-key"})
 _MASK_PREFIX = "sha256:"
 # cassette 文件扩展名
 _CASSETTE_SUFFIX = ".json"
+# 本模块支持的 cassette 格式版本。向后兼容：新字段一律带默认值，旧 cassette
+# 缺少该字段时按 v1 解析；向前不兼容：文件版本高于此值时明确报「版本过新」，
+# 而不是笼统的「字段不符合契约」——后者会把「用旧代码读新文件」误导成
+# 「文件损坏」，排障方向从一开始就错。
+CURRENT_FORMAT_VERSION = 1
 
 
 class RequestInfo(BaseModel):
@@ -102,6 +111,7 @@ class Cassette(BaseModel):
         response_body: 响应体文本。
         request_hash: 请求指纹的稳定 hash，兼作版本字段。
         recorded_at: 录制时刻（UTC，ISO 8601）。
+        format_version: cassette 格式版本号，用于前向兼容检测。
     """
 
     # 严格模式：禁止未知字段，保证回放侧不会把不认识的键当成有效录制内容
@@ -119,6 +129,11 @@ class Cassette(BaseModel):
     response_body: str = Field(default="", description="响应体文本")
     request_hash: str = Field(description="请求指纹的稳定 hash（版本字段）")
     recorded_at: str = Field(description="录制时刻（UTC，ISO 8601）")
+    format_version: int = Field(
+        default=1,
+        ge=1,
+        description="cassette 格式版本号，用于前向兼容检测",
+    )
 
     @staticmethod
     def compute_request_hash(request: RequestInfo) -> str:
@@ -287,6 +302,7 @@ def record(
         response_body=_normalize_response_body(response_info.body),
         request_hash=Cassette.compute_request_hash(request_info),
         recorded_at=datetime.now(UTC).isoformat(),
+        format_version=CURRENT_FORMAT_VERSION,
     )
     directory = _resolve_cassette_dir(cassette_dir)
     path = directory / f"{cassette.request_hash}{_CASSETTE_SUFFIX}"
@@ -321,7 +337,8 @@ def find_match(
         Cassette | None: 命中的 cassette；目录或文件不存在时返回 None。
 
     Raises:
-        ReplayError: cassette 文件读取失败、JSON 损坏、字段不符合契约，或文件内
+        ReplayError: cassette 文件读取失败、JSON 损坏、字段不符合契约，文件声明的
+            格式版本高于本模块支持的上限（见 ``CURRENT_FORMAT_VERSION``），或文件内
             记录的 hash 与重算 hash 不一致（请求已变更）时抛出。
     """
     expected_hash = Cassette.compute_request_hash(request_info)
@@ -468,6 +485,47 @@ def _resolve_cassette_dir(cassette_dir: str | Path | None) -> Path:
     return Settings().replay_dir
 
 
+def _check_format_version(data: Any, path: Path) -> None:
+    """校验 cassette 声明的格式版本不高于当前代码支持的上限。
+
+    检查点必须在 pydantic 契约校验**之前**：Cassette 是 extra="forbid"，
+    新版本 cassette 携带的未知字段（如 M1-D06b 的 timing）会先让
+    ``model_validate`` 失败。若把版本检查放在校验之后，这条路径永远走不到，
+    错误会退化成「字段不符合契约」——恰好把「旧代码读新文件」说成「文件损坏」，
+    排障方向从第一步就错。
+
+    缺字段（旧 cassette）或非整数一律放行：向后兼容优先，畸形值交由契约层
+    统一报「文件损坏」。
+
+    Args:
+        data: 已解析的 JSON 值。
+        path: cassette 文件路径（用于错误上下文）。
+
+    Returns:
+        None: 版本可支持时正常返回。
+
+    Raises:
+        ReplayError: 声明的 format_version 高于 ``CURRENT_FORMAT_VERSION`` 时抛出。
+    """
+    if not isinstance(data, dict):
+        return
+    version = data.get("format_version")
+    if not isinstance(version, int):
+        return
+    if version > CURRENT_FORMAT_VERSION:
+        raise ReplayError(
+            message=(
+                f"cassette 格式版本过新（v{version}），"
+                f"当前代码支持 v{CURRENT_FORMAT_VERSION}，请升级 aquamind 后重试"
+            ),
+            context={
+                "cassette": str(path),
+                "cassette_version": version,
+                "supported_version": CURRENT_FORMAT_VERSION,
+            },
+        )
+
+
 def _load_cassette(path: Path) -> Cassette:
     """从磁盘加载 cassette 并完成契约校验。
 
@@ -478,8 +536,9 @@ def _load_cassette(path: Path) -> Cassette:
         Cassette: 通过契约校验的 cassette。
 
     Raises:
-        ReplayError: 文件不可读、非 UTF-8、JSON 解析失败，或字段不符合契约时抛出。
-            三类失败都在此包装成 ReplayError：调用方只需 except ReplayError，
+        ReplayError: 文件不可读、非 UTF-8、JSON 解析失败、声明的格式版本过新，
+            或字段不符合契约时抛出。
+            四类失败都在此包装成 ReplayError：调用方只需 except ReplayError，
             不会被 json.JSONDecodeError / pydantic ValidationError 击穿。
     """
     try:
@@ -497,6 +556,9 @@ def _load_cassette(path: Path) -> Cassette:
             message="cassette 文件损坏：JSON 解析失败",
             context={"cassette": str(path), "line": exc.lineno},
         ) from exc
+    # 版本闸口必须在契约校验之前：extra="forbid" 会先因新字段把 model_validate
+    # 打挂，若把检查放在校验之后，这条路径永远走不到
+    _check_format_version(data, path)
     try:
         return Cassette.model_validate(data)
     except ValidationError as exc:

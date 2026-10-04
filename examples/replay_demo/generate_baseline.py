@@ -206,8 +206,6 @@ def main() -> None:
         None: 统计结果写入 ``scripts/replay_baseline.json`` 并打印摘要。
     """
     scenarios = _build_scenarios()
-    # 基线统计用独立临时目录，避免污染示例 cassette 目录
-    cassette_dir = Path(tempfile.mkdtemp(prefix="aquamind-baseline-"))
 
     status_hits = 0
     body_hits = 0
@@ -216,61 +214,69 @@ def main() -> None:
     replayed_ok = 0
     hash_ms_samples: list[float] = []
     per_case: list[dict[str, Any]] = []
+    # 留一个实测指纹样本用于报告，避免把 hash 长度在脚本里再写一遍常量
+    sample_hash = ""
 
-    for index, scenario in enumerate(scenarios, start=1):
-        record(scenario.request, scenario.response, cassette_dir)
+    # 基线统计用独立临时目录，避免污染示例 cassette 目录。
+    # 用上下文管理器而非 mkdtemp：后者在脚本退出后不清理，每次运行都在 %TEMP%
+    # 下留一个 aquamind-baseline-* 目录（内含 8 个 cassette 文件）持续累积
+    with tempfile.TemporaryDirectory(prefix="aquamind-baseline-") as tmpdir:
+        cassette_dir = Path(tmpdir)
+        for index, scenario in enumerate(scenarios, start=1):
+            record(scenario.request, scenario.response, cassette_dir)
 
-        # 指纹稳定性：同一请求算两次必须一致
-        first_hash = Cassette.compute_request_hash(scenario.request)
-        second_hash = Cassette.compute_request_hash(scenario.request)
-        hash_stable += int(first_hash == second_hash)
+            # 指纹稳定性：同一请求算两次必须一致
+            first_hash = Cassette.compute_request_hash(scenario.request)
+            second_hash = Cassette.compute_request_hash(scenario.request)
+            hash_stable += int(first_hash == second_hash)
+            sample_hash = first_hash
 
-        # 指纹计算耗时：重复 HASH_ITERATIONS 次取平均
-        start = time.perf_counter()
-        for _ in range(HASH_ITERATIONS):
-            Cassette.compute_request_hash(scenario.request)
-        elapsed_ms = (time.perf_counter() - start) * 1000 / HASH_ITERATIONS
-        hash_ms_samples.append(elapsed_ms)
+            # 指纹计算耗时：重复 HASH_ITERATIONS 次取平均
+            start = time.perf_counter()
+            for _ in range(HASH_ITERATIONS):
+                Cassette.compute_request_hash(scenario.request)
+            elapsed_ms = (time.perf_counter() - start) * 1000 / HASH_ITERATIONS
+            hash_ms_samples.append(elapsed_ms)
 
-        cassette = find_match(scenario.request, cassette_dir)
-        if cassette is None:
+            cassette = find_match(scenario.request, cassette_dir)
+            if cassette is None:
+                per_case.append(
+                    {
+                        "index": index,
+                        "label": scenario.label,
+                        "method": scenario.request.method,
+                        "matched": False,
+                        "request_hash": first_hash,
+                        "hash_compute_ms": round(elapsed_ms, 4),
+                    }
+                )
+                continue
+
+            replayed = play(cassette)
+            replayed_ok += 1
+            # 三个一致率：状态码、响应体原文、响应体文本
+            # （bytes 已在录制边界归一为文本，故 text 期望值与 body 期望值同源）
+            status_hit = replayed.status_code == scenario.response.status_code
+            body_hit = replayed.body == scenario.expected_body
+            text_hit = replayed.text == scenario.expected_body
+            status_hits += int(status_hit)
+            body_hits += int(body_hit)
+            text_hits += int(text_hit)
             per_case.append(
                 {
                     "index": index,
                     "label": scenario.label,
                     "method": scenario.request.method,
-                    "matched": False,
+                    "matched": True,
                     "request_hash": first_hash,
+                    "recorded_status_code": scenario.response.status_code,
+                    "replayed_status_code": replayed.status_code,
+                    "status_code_match": status_hit,
+                    "body_match": body_hit,
+                    "text_match": text_hit,
                     "hash_compute_ms": round(elapsed_ms, 4),
                 }
             )
-            continue
-
-        replayed = play(cassette)
-        replayed_ok += 1
-        # 三个一致率：状态码、响应体原文、响应体文本
-        # （bytes 已在录制边界归一为文本，故 text 期望值与 body 期望值同源）
-        status_hit = replayed.status_code == scenario.response.status_code
-        body_hit = replayed.body == scenario.expected_body
-        text_hit = replayed.text == scenario.expected_body
-        status_hits += int(status_hit)
-        body_hits += int(body_hit)
-        text_hits += int(text_hit)
-        per_case.append(
-            {
-                "index": index,
-                "label": scenario.label,
-                "method": scenario.request.method,
-                "matched": True,
-                "request_hash": first_hash,
-                "recorded_status_code": scenario.response.status_code,
-                "replayed_status_code": replayed.status_code,
-                "status_code_match": status_hit,
-                "body_match": body_hit,
-                "text_match": text_hit,
-                "hash_compute_ms": round(elapsed_ms, 4),
-            }
-        )
 
     total = len(scenarios)
     report: dict[str, Any] = {
@@ -286,7 +292,7 @@ def main() -> None:
             "body_match_rate": round(body_hits / total, 4),
             "text_match_rate": round(text_hits / total, 4),
             "request_hash_stability_rate": round(hash_stable / total, 4),
-            "hash_length": 16,
+            "hash_length": len(sample_hash),
         },
         "hash_cost": {
             "iterations_per_case": HASH_ITERATIONS,
