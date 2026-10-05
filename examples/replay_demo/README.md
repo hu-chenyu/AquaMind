@@ -16,7 +16,7 @@
 | --- | --- |
 | `demo_record_play.py` | 最简演示：构造模拟请求与响应 → `record()` → `find_match()` → `play()`；第二段演示 chunk 时序录制与版本闸口 |
 | `generate_baseline.py` | 基线生成脚本：11 组请求（8 组非流式 + 3 组流式）全量录制回放，统计一致率与时序录制精度并写出基线 JSON |
-| `cassettes/` | 示例 cassette 文件，由 `demo_record_play.py` 生成（静态产物，不随本任务重写） |
+| `cassettes/4c289c1a45b66aba.json` | 示例 cassette，**v2 形态**（含 `format_version: 2` 与 `timing` 时序）。内容是手工整理的展示用例：3 个 chunk 的增量文本拼接后等于响应体里的 `content`。用 `--cassette-dir` 重跑 `demo_record_play.py` 会把它改写为同一请求的**非流式** v2 形态（`timing: null`）——两者都是合法 v2，只是演示重点不同 |
 | `README.md` | 本文件 |
 
 ## 环境准备
@@ -216,6 +216,9 @@ cassette 就是一个 UTF-8 编码的 JSON 文件，文件名为 `{request_hash}
     { "index": 3, "arrival_ms": 400.0, "text": "模型。" }
   ]
 ```
+
+仓库内的示例文件 `cassettes/4c289c1a45b66aba.json` 就是后一种形态（3 个 chunk，
+`arrival_ms` 为 `0.0 / 85.5 / 240.0`），可直接打开对照上面的字段约定。
 
 几点值得注意的约定：
 

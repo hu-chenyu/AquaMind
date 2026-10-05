@@ -530,6 +530,22 @@ class TestRecordTiming:
             (3, 510.5, "时序"),
         ]
 
+    def test_record_with_inf_or_nan_arrival_ms_raises(self, tmp_path: Path) -> None:
+        """非有限到达时刻必须在录制边界报错，不能写出「自己读不回来」的 cassette。
+
+        pydantic 序列化会把 inf/NaN 写成 null：不拦的话 record() 成功返回路径，
+        后续 find_match() 加载才报「字段不符合 Cassette 契约」——把「录制输入非法」
+        说成「文件损坏」，排障方向从第一步就错。
+        """
+        for bad_value in (float("inf"), float("-inf"), float("nan")):
+            with pytest.raises(ValidationError, match="finite") as excinfo:
+                record(_make_request(), _make_response(), tmp_path, chunks=[(bad_value, "片")])
+            # 错误必须落在 arrival_ms 字段上，不能被泛化成别的字段
+            errors = excinfo.value.errors()
+            assert any("arrival_ms" in str(error["loc"]) for error in errors)
+        # 非法输入不得留下半成品 cassette：报错发生在落盘之前
+        assert list(tmp_path.glob("*.json")) == []
+
     def test_legacy_v1_cassette_has_no_timing(self, tmp_path: Path) -> None:
         """D6a 录制的 v1 cassette（无 timing 字段）加载后 timing 为 None。"""
         request = _make_request()

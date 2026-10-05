@@ -128,7 +128,11 @@ class ChunkTiming(BaseModel):
 
     index: int = Field(ge=0, description="chunk 序号，从 0 开始")
     arrival_ms: float = Field(
-        description="相对第一个 chunk 的到达时间（毫秒，保留 3 位小数），第一个恒为 0.0"
+        description="相对第一个 chunk 的到达时间（毫秒，保留 3 位小数），第一个恒为 0.0",
+        # 非有限值（inf/NaN）必须在契约层就拒：pydantic 序列化会把它们写成 null，
+        # 于是 record() 成功返回路径、文件却读不回来（加载时报「字段不符合契约」），
+        # 「录制输入非法」被说成「文件损坏」，与 D6a 确立的区分根因原则相悖
+        allow_inf_nan=False,
     )
     text: str = Field(description="该 chunk 的文本内容")
 
@@ -346,6 +350,9 @@ def record(
         ReplayError: 响应体 bytes 无法按 UTF-8 解码，或目录/文件创建写入失败时抛出。
         ConfigError: cassette_dir 为 None 且全局配置本身非法时由 config 层抛出，
             本模块不吞配置层异常。
+        ValidationError: chunks 中的到达时刻不是有限数（inf/NaN）时由 pydantic
+            抛出，本函数不捕获——与 ``load_cases()`` 对用例契约违规的同一口径：
+            调用方输入非法应在录制边界当场暴露，而不是落盘后变成「文件损坏」。
     """
     cassette = Cassette(
         request_method=request_info.method.strip().upper(),
