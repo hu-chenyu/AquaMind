@@ -1,16 +1,21 @@
-"""VCR 文本录制回放：Cassette 数据结构 + record/find_match/play。
+"""VCR 录制回放：Cassette 数据结构 + record/find_match/play + chunk 时序录制。
 
-本模块（M1-D06a）只覆盖**文本层面**的录制与回放：把一次请求与其响应落成
-一个 cassette 文件，回放时按请求指纹找到同一份 cassette 并还原响应对象。
+本模块覆盖**文本层面**与**chunk 到达时序**两个层面的录制：
 
-结构上的扩展预留：chunk 到达时间（``timing``，M1-D06b 录制）与时序调度回放
-（M1-D06c）以**带默认值的可选字段**形式追加在 Cassette 上，字段一旦出现即被
-结构接收；未携带新字段的旧 cassette 仍按瞬时回放处理。因此这里不用任何
-写死的字段清单或「多字段一张表」的封闭结构。
+- M1-D06a：把一次请求与其响应落成一个 cassette 文件，回放时按请求指纹找到
+  同一份 cassette 并还原响应对象。
+- M1-D06b：流式响应的每个 chunk 及其相对到达时刻一并录进 cassette 的
+  ``timing`` 字段。注意本模块**只录制、不按时间调度**——``play()`` 仍返回一次性
+  给全的完整响应，时序保真回放（加速/减速倍率、旧格式瞬时回放）留给 M1-D06c。
 
-版本兼容由 ``format_version`` 字段承担：该字段缺失时按 v1 解析（向后兼容），
-高于 ``CURRENT_FORMAT_VERSION`` 时直接报「版本过新」并提示升级（向前不兼容），
-从而把「文件太新」与「文件损坏」这两类根因区分开。
+结构上的扩展约定：后续追加的字段一律是**带默认值的可选字段**，旧 cassette
+缺该字段时按缺省语义处理（``timing`` 缺省为 None，即「非流式/旧格式，按瞬时
+回放」），因此不用任何写死的字段清单或「多字段一张表」的封闭结构。
+
+版本兼容由 ``format_version`` 字段承担：当前为 v2（v2 相对 v1 新增 ``timing``）。
+该字段缺失时按 v1 解析（向后兼容），高于 ``CURRENT_FORMAT_VERSION`` 时直接报
+「版本过新」并提示升级（向前不兼容），从而把「文件太新」与「文件损坏」这两类
+根因区分开。
 
 指纹与脱敏约定：
     ``request_hash`` 由「方法 + URL + 关键请求头（排序后）+ 请求体」规范化后的
@@ -47,11 +52,16 @@ _SENSITIVE_HEADERS: frozenset[str] = frozenset({"authorization", "x-api-key"})
 _MASK_PREFIX = "sha256:"
 # cassette 文件扩展名
 _CASSETTE_SUFFIX = ".json"
-# 本模块支持的 cassette 格式版本。向后兼容：新字段一律带默认值，旧 cassette
-# 缺少该字段时按 v1 解析；向前不兼容：文件版本高于此值时明确报「版本过新」，
-# 而不是笼统的「字段不符合契约」——后者会把「用旧代码读新文件」误导成
-# 「文件损坏」，排障方向从一开始就错。
-CURRENT_FORMAT_VERSION = 1
+# arrival_ms 保留的小数位：毫秒级留 3 位即微秒精度，既足以表达 chunk 之间的
+# 到达间隔，又能把浮点表示的尾差（如 0.1+0.2=0.30000000000000004）挡在落盘前，
+# 避免同一段流在不同机器上录出肉眼相同、数值不同的 arrival_ms
+_ARRIVAL_PRECISION = 3
+# 本模块支持的 cassette 格式版本。v2 相对 v1 新增 timing 字段。
+# 向后兼容：新字段一律带默认值，旧 cassette 缺少该字段时按 v1 解析；
+# 向前不兼容：文件版本高于此值时明确报「版本过新」，而不是笼统的
+# 「字段不符合契约」——后者会把「用旧代码读新文件」误导成「文件损坏」，
+# 排障方向从一开始就错。
+CURRENT_FORMAT_VERSION = 2
 
 
 class RequestInfo(BaseModel):
@@ -95,6 +105,34 @@ class ResponseInfo(BaseModel):
     body: str | bytes | None = Field(default=None, description="响应体，无响应体时为 None")
 
 
+class ChunkTiming(BaseModel):
+    """单个 chunk 的到达时序记录（流式响应专有）。
+
+    一个流式响应的「内容」与「节奏」是两个正交的事实：文本录制只还原了前者，
+    而真实调用方（前端打字机、进度条、逐字播报）体验到的是后者。本模型承载
+    每个 chunk 的文本与它相对第一个 chunk 的到达时刻，使 M1-D06c 能够按录下
+    的时间调度 chunk 输出。
+
+    时刻存**相对偏移**而非绝对时间：录制的绝对时刻受发起机器时钟与运行时刻
+    影响，既不可复现也无回放价值，调用方真正需要的是「chunk 之间隔多久」。
+
+    Attributes:
+        index: chunk 序号，从 0 开始，与 ``arrival_ms`` 归一化后的起点对齐。
+        arrival_ms: 相对第一个 chunk 的到达时间，单位毫秒，保留 3 位小数；
+            第一个 chunk 恒为 0.0。浮点而非整数是为了容纳亚毫秒级的首包抖动。
+        text: 该 chunk 的文本内容（增量文本，拼接后等于完整响应体）。
+    """
+
+    # 严格模式：禁止未知字段，防止调用方拼错字段名后被静默忽略
+    model_config = ConfigDict(extra="forbid")
+
+    index: int = Field(ge=0, description="chunk 序号，从 0 开始")
+    arrival_ms: float = Field(
+        description="相对第一个 chunk 的到达时间（毫秒，保留 3 位小数），第一个恒为 0.0"
+    )
+    text: str = Field(description="该 chunk 的文本内容")
+
+
 class Cassette(BaseModel):
     """cassette：一次「请求 + 响应」录制的完整落盘结构。
 
@@ -111,7 +149,9 @@ class Cassette(BaseModel):
         response_body: 响应体文本。
         request_hash: 请求指纹的稳定 hash，兼作版本字段。
         recorded_at: 录制时刻（UTC，ISO 8601）。
-        format_version: cassette 格式版本号，用于前向兼容检测。
+        format_version: cassette 格式版本号，用于前向兼容检测。缺该字段的旧
+            cassette 按 v1 解析，故默认值取 1 而非当前版本号。
+        timing: 流式响应的 chunk 到达时序记录；非流式响应或旧格式 cassette 为 None。
     """
 
     # 严格模式：禁止未知字段，保证回放侧不会把不认识的键当成有效录制内容
@@ -132,7 +172,13 @@ class Cassette(BaseModel):
     format_version: int = Field(
         default=1,
         ge=1,
-        description="cassette 格式版本号，用于前向兼容检测",
+        description="cassette 格式版本号，用于前向兼容检测；缺失时按 v1 解析",
+    )
+    # 带默认值的可选字段：M1-D06a 录制的旧 cassette 无此键，加载后为 None，
+    # 语义是「非流式响应 / 旧格式」，M1-D06c 据此按瞬时回放处理
+    timing: list[ChunkTiming] | None = Field(
+        default=None,
+        description="流式响应的 chunk 到达时序记录；非流式响应或旧格式 cassette 为 None",
     )
 
     @staticmethod
@@ -272,17 +318,26 @@ def record(
     request_info: RequestInfo,
     response_info: ResponseInfo,
     cassette_dir: str | Path | None = None,
+    chunks: list[tuple[float, str]] | None = None,
 ) -> str:
     """录制一次请求-响应并落盘为 cassette 文件。
 
     文件名为 ``{request_hash}.json``：同一请求重复录制会**覆盖**旧文件
     （最新一次录制生效），避免同一指纹下堆积多个文件导致匹配歧义。
 
+    流式响应额外传入 ``chunks``，逐 chunk 的到达时刻与文本一并录进
+    ``timing``。本函数**只录不播**：``timing`` 被完整落盘并可回放读取，但
+    ``play()`` 仍一次性返回完整响应（时序调度留给 M1-D06c）。
+
     Args:
         request_info: 请求信息，其指纹由 :meth:`Cassette.compute_request_hash` 决定。
         response_info: 响应信息，bytes 响应体在边界按 UTF-8 解码为文本。
         cassette_dir: cassette 存储目录，目录不存在时自动创建；None 时取全局配置
             ``Settings.replay_dir``（可用 ``AQ_REPLAY_DIR`` 覆盖）。
+        chunks: 流式响应的 chunk 列表，每个元素为 ``(arrival_ms, text)``；
+            ``arrival_ms`` 是该 chunk 的到达时刻（毫秒），函数内部以第一个
+            chunk 为原点归一化。None 表示非流式响应（``timing`` 保持 None）；
+            空列表表示流式响应但未采集到 chunk（``timing`` 为空列表）。
 
     Returns:
         str: 落盘文件的路径字符串。
@@ -303,6 +358,7 @@ def record(
         request_hash=Cassette.compute_request_hash(request_info),
         recorded_at=datetime.now(UTC).isoformat(),
         format_version=CURRENT_FORMAT_VERSION,
+        timing=None if chunks is None else _build_timing(chunks),
     )
     directory = _resolve_cassette_dir(cassette_dir)
     path = directory / f"{cassette.request_hash}{_CASSETTE_SUFFIX}"
@@ -364,6 +420,9 @@ def play(cassette: Cassette) -> ReplayedResponse:
     """把 cassette 还原为响应对象。
 
     只做还原，不做重试、归一化或状态码判断——那些属于调用方（适配器层）的职责。
+
+    M1-D06b 边界：``cassette.timing`` 会被完整读取与保留，但**不参与本次还原**
+    ——回放仍一次性给全响应体，不按录下的时间调度 chunk 输出（那属于 M1-D06c）。
 
     Args:
         cassette: 命中的 cassette。
@@ -471,6 +530,37 @@ def _normalize_response_body(body: str | bytes | None) -> str:
         ) from exc
 
 
+def _build_timing(chunks: list[tuple[float, str]]) -> list[ChunkTiming]:
+    """把「(到达时刻毫秒, 文本)」列表转换为可落盘的 ChunkTiming 列表。
+
+    两点归一化约定：
+
+    1. **以第一个 chunk 为原点**。录制方给的是绝对到达时刻，但录制的绝对时刻
+        取决于发起机器的时钟与运行时刻，既不可复现也对回放无意义；调用方真正
+        需要的是「chunk 之间隔多久」。归一化后第一个 chunk 恒为 0.0。
+    2. **保序即事实**。chunk 的先后顺序由列表顺序决定（``index`` 即位置），
+        不按 ``arrival_ms`` 排序：录制方给出的顺序才是服务端真实下发的顺序，
+        贸然排序会掩盖真实的乱序到达。允许 ``arrival_ms`` 为负，它表达的是
+        「该 chunk 比第一个 chunk 还早到达」这一可观测事实。
+
+    Args:
+        chunks: 流式响应的 chunk 列表，每个元素为 (到达时刻毫秒, 文本)；
+            可为空列表（流式响应但未采集到 chunk）。
+
+    Returns:
+        list[ChunkTiming]: 按输入顺序编号的时序记录列表。
+    """
+    first_arrival = chunks[0][0] if chunks else 0.0
+    return [
+        ChunkTiming(
+            index=index,
+            arrival_ms=round(arrival - first_arrival, _ARRIVAL_PRECISION),
+            text=text,
+        )
+        for index, (arrival, text) in enumerate(chunks)
+    ]
+
+
 def _resolve_cassette_dir(cassette_dir: str | Path | None) -> Path:
     """解析 cassette 存储目录。
 
@@ -489,7 +579,7 @@ def _check_format_version(data: Any, path: Path) -> None:
     """校验 cassette 声明的格式版本不高于当前代码支持的上限。
 
     检查点必须在 pydantic 契约校验**之前**：Cassette 是 extra="forbid"，
-    新版本 cassette 携带的未知字段（如 M1-D06b 的 timing）会先让
+    更高版本 cassette 携带的未知字段（未来版本新增的字段）会先让
     ``model_validate`` 失败。若把版本检查放在校验之后，这条路径永远走不到，
     错误会退化成「字段不符合契约」——恰好把「旧代码读新文件」说成「文件损坏」，
     排障方向从第一步就错。

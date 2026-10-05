@@ -2,7 +2,9 @@
 
 覆盖：Cassette 契约、request_hash 稳定性与版本校验、record 落盘、
 find_match 精确匹配（无匹配/损坏/指纹变更）、format_version 前向兼容闸口、
-play 还原、ReplayedResponse 读取面（text/content/json）、异常消息脱敏。
+play 还原、ReplayedResponse 读取面（text/content/json）、异常消息脱敏，
+以及 M1-D06b 的 chunk 到达时序录制（ChunkTiming 契约、归一化、3 位小数、
+序列化往返、v1 旧 cassette 兼容）。
 
 所有用例只用 tmp_path 构造临时 cassette 目录，不触达任何真实 API（CI 零 key）。
 """
@@ -19,6 +21,7 @@ from aquamind.exceptions import ReplayError
 from aquamind.replay import (
     CURRENT_FORMAT_VERSION,
     Cassette,
+    ChunkTiming,
     ReplayedResponse,
     RequestInfo,
     ResponseInfo,
@@ -30,6 +33,15 @@ from aquamind.replay import (
 
 # 出现在请求体里的敏感样本：用于验证它不会随异常字符串进入日志
 _SECRET_BODY = "用户隐私数据-身份证110101199001011234"
+# 模拟一次流式响应的 chunk 列表：(到达时刻毫秒, chunk 文本)
+# 第一个 chunk 的时刻故意取 100.0 而非 0：录制方给的是绝对到达时刻，
+# 「以第一个 chunk 为原点」的归一化必须由 replay 侧完成
+_STREAM_CHUNKS: list[tuple[float, str]] = [
+    (100.0, "流式"),
+    (200.23456, "响应"),
+    (450.0, "的"),
+    (610.5, "时序"),
+]
 
 
 def _make_request(
@@ -416,6 +428,169 @@ class TestPlayAndReplayRequest:
         assert len(list(tmp_path.glob("*.json"))) == 1
 
 
+class TestChunkTimingContract:
+    """测试 ChunkTiming 数据结构本身的字段与契约。"""
+
+    def test_fields_readable(self) -> None:
+        """index / arrival_ms / text 三个字段应按构造值原样可读。"""
+        chunk = ChunkTiming(index=0, arrival_ms=0.0, text="首片")
+        assert chunk.index == 0
+        assert chunk.arrival_ms == 0.0
+        assert chunk.text == "首片"
+
+    def test_rejects_unknown_field(self) -> None:
+        """未知字段必须被拒绝：字段名拼错（D6a 热修前的 delay_ms 之类）要当场报错。
+
+        这条是 timing 自身的防线——错字段名若被静默忽略，回放时会得到「有时序
+        记录但读不出间隔」的假录制，而 M1-D06c 的调度会直接按错误的节奏跑。
+        """
+        with pytest.raises(ValidationError, match="chunk_index"):
+            ChunkTiming(index=0, arrival_ms=0.0, text="x", chunk_index=0)
+
+    def test_rejects_negative_index(self) -> None:
+        """index 为负必须被拒绝（chunk 序号从 0 开始）。"""
+        with pytest.raises(ValidationError, match="index"):
+            ChunkTiming(index=-1, arrival_ms=0.0, text="x")
+
+
+class TestRecordTiming:
+    """测试流式响应的 chunk 到达时序录制（M1-D06b）。
+
+    时序录制的三条约定都在这里落证据：时刻以第一个 chunk 为原点归一化、
+    arrival_ms 保留 3 位小数、不传 chunks 时 timing 为 None（向后兼容）。
+    """
+
+    def test_timing_recorded_when_chunks_passed(self, tmp_path: Path) -> None:
+        """传入 chunks 后 timing 不为 None，且 chunk 数量与输入一致。"""
+        path = Path(record(_make_request(), _make_response(), tmp_path, chunks=_STREAM_CHUNKS))
+        timing = json.loads(path.read_text(encoding="utf-8"))["timing"]
+        assert timing is not None
+        assert len(timing) == len(_STREAM_CHUNKS)
+
+    def test_timing_fields_are_correct(self, tmp_path: Path) -> None:
+        """index 按位置编号、arrival_ms 已归一化、text 逐片对应。"""
+        cassette = _record_and_load(tmp_path, _STREAM_CHUNKS)
+        assert cassette.timing is not None
+        assert [chunk.index for chunk in cassette.timing] == [0, 1, 2, 3]
+        # 第一个 chunk 归一化为 0.0，其余为与第一个 chunk 的间隔
+        assert [chunk.arrival_ms for chunk in cassette.timing] == [0.0, 100.235, 350.0, 510.5]
+        assert [chunk.text for chunk in cassette.timing] == [text for _, text in _STREAM_CHUNKS]
+
+    def test_arrival_ms_keeps_three_decimals(self, tmp_path: Path) -> None:
+        """arrival_ms 保留 3 位小数：亚毫秒抖动留 3 位即微秒精度，再多是噪声。"""
+        cassette = _record_and_load(tmp_path, [(100.0, "a"), (101.23456, "b")])
+        assert cassette.timing is not None
+        # 1.23456 → 1.235（不是截断成 1.234）
+        assert cassette.timing[1].arrival_ms == 1.235
+        # 所有时刻都不超过 3 位小数：浮点尾差必须在落盘前被抹掉
+        assert all(chunk.arrival_ms == round(chunk.arrival_ms, 3) for chunk in cassette.timing)
+
+    def test_first_chunk_normalized_to_zero(self, tmp_path: Path) -> None:
+        """第一个 chunk 无论原始时刻是什么，落盘后恒为 0.0（相对时刻而非绝对时刻）。"""
+        cassette = _record_and_load(tmp_path, [(1730.6789, "首片"), (1731.0, "次片")])
+        assert cassette.timing is not None
+        assert cassette.timing[0].arrival_ms == 0.0
+        # 归一化只平移不缩放：两片真实间隔 0.3211ms 保留 3 位后为 0.321
+        assert cassette.timing[1].arrival_ms == 0.321
+
+    def test_timing_is_none_without_chunks(self, tmp_path: Path) -> None:
+        """不传 chunks（非流式响应）时 timing 为 None，保持与 D6a 录制完全一致。"""
+        path = Path(record(_make_request(), _make_response(), tmp_path))
+        assert json.loads(path.read_text(encoding="utf-8"))["timing"] is None
+        cassette = find_match(_make_request(), tmp_path)
+        assert cassette is not None
+        assert cassette.timing is None
+
+    def test_empty_chunks_records_empty_list(self, tmp_path: Path) -> None:
+        """显式传空列表表示「流式但未采集到 chunk」，与不传（非流式）语义不同。"""
+        cassette = _record_and_load(tmp_path, [])
+        # 不传 chunks → None；传空列表 → []。两者都表示「没有时序可调度」，
+        # 但只有 None 能断定「这是一次非流式响应」
+        assert cassette.timing == []
+
+    def test_out_of_order_arrival_is_kept(self, tmp_path: Path) -> None:
+        """到达顺序与时刻顺序不一致时按录制顺序保留，不重排、不改写时刻。"""
+        cassette = _record_and_load(tmp_path, [(100.0, "先到"), (80.0, "后到却更早")])
+        assert cassette.timing is not None
+        # 负值表达「比第一个 chunk 还早到达」这一可观测事实，抹掉会掩盖真实的乱序
+        assert [chunk.text for chunk in cassette.timing] == ["先到", "后到却更早"]
+        assert [chunk.arrival_ms for chunk in cassette.timing] == [0.0, -20.0]
+
+    def test_timing_survives_json_round_trip(self, tmp_path: Path) -> None:
+        """含 timing 的 cassette 落盘再加载，三个字段逐个还原（含亚毫秒值）。"""
+        request = _make_request()
+        record(request, _make_response(), tmp_path, chunks=_STREAM_CHUNKS)
+        reloaded = find_match(request, tmp_path)
+        assert reloaded is not None
+        assert reloaded.timing is not None
+        assert [(c.index, c.arrival_ms, c.text) for c in reloaded.timing] == [
+            (0, 0.0, "流式"),
+            (1, 100.235, "响应"),
+            (2, 350.0, "的"),
+            (3, 510.5, "时序"),
+        ]
+
+    def test_legacy_v1_cassette_has_no_timing(self, tmp_path: Path) -> None:
+        """D6a 录制的 v1 cassette（无 timing 字段）加载后 timing 为 None。"""
+        request = _make_request()
+        path = Path(record(request, _make_response(), tmp_path, chunks=_STREAM_CHUNKS))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        # 还原成 D6a 产物形态：v1 且没有 timing 键
+        payload["format_version"] = 1
+        del payload["timing"]
+        _write_raw(path, json.dumps(payload, ensure_ascii=False))
+
+        cassette = find_match(request, tmp_path)
+        assert cassette is not None
+        assert cassette.format_version == 1
+        assert cassette.timing is None
+        # 旧 cassette 仍按瞬时回放给出完整响应体，不因缺 timing 而失败
+        assert play(cassette).text == '{"id": "chatcmpl-1", "choices": []}'
+
+    def test_recorded_cassette_declares_v2(self, tmp_path: Path) -> None:
+        """带 timing 的录制必须显式声明 v2，否则旧代码读不到「版本过新」的提示。"""
+        path = Path(record(_make_request(), _make_response(), tmp_path, chunks=_STREAM_CHUNKS))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["format_version"] == 2
+        assert payload["format_version"] == CURRENT_FORMAT_VERSION
+
+    def test_play_ignores_timing_in_d6b(self, tmp_path: Path) -> None:
+        """D6b 边界：timing 被录制并可回放读取，但 play() 仍一次性返回完整响应。
+
+        时序调度属于 M1-D06c。这里先把边界钉住：录了 timing 的 cassette 回放后
+        仍应得到完整全文，且不被切分——D6c 才引入按时刻分块输出。
+        """
+        request = _make_request()
+        record(request, _make_response(body="流式响应的全文"), tmp_path, chunks=_STREAM_CHUNKS)
+        cassette = find_match(request, tmp_path)
+        assert cassette is not None
+        assert cassette.timing is not None
+        replayed = play(cassette)
+        assert replayed.text == "流式响应的全文"
+        # chunk 文本拼接后应与完整响应体一致（录制侧的输入正确性）
+        assert "".join(chunk.text for chunk in cassette.timing) == "流式响应的时序"
+
+
+def _record_and_load(tmp_path: Path, chunks: list[tuple[float, str]]) -> Cassette:
+    """录制并回读一份 cassette（时序用例的公共前置）。
+
+    Args:
+        tmp_path: pytest 提供的临时目录。
+        chunks: 传入 record() 的 chunk 列表。
+
+    Returns:
+        Cassette: find_match 回读到的 cassette。
+
+    Raises:
+        AssertionError: 回读未命中时显式失败，避免用例后续读到 None 上。
+    """
+    request = _make_request()
+    record(request, _make_response(), tmp_path, chunks=chunks)
+    cassette = find_match(request, tmp_path)
+    assert cassette is not None
+    return cassette
+
+
 class TestFormatVersion:
     """测试 cassette 格式版本字段的前向兼容闸口。
 
@@ -426,8 +601,8 @@ class TestFormatVersion:
     """
 
     def test_current_format_version_constant(self) -> None:
-        """本模块支持的格式版本号应为 1（D6b 引入 timing 时递增到 2）。"""
-        assert CURRENT_FORMAT_VERSION == 1
+        """本模块支持的格式版本号应为 2（v2 相对 v1 新增 timing 字段）。"""
+        assert CURRENT_FORMAT_VERSION == 2
 
     def test_recorded_cassette_has_format_version(self, tmp_path: Path) -> None:
         """录制产出的 cassette 必须显式带上当前格式版本号。"""
@@ -471,12 +646,23 @@ class TestFormatVersion:
         request = _make_request()
         path = Path(record(request, _make_response(), tmp_path))
         payload = json.loads(path.read_text(encoding="utf-8"))
-        payload["format_version"] = 2
-        # 模拟 D6b 引入的 timing 字段（当前代码尚不认识）
-        payload["timing"] = [{"chunk_index": 0, "delay_ms": 12.5}]
+        payload["format_version"] = CURRENT_FORMAT_VERSION + 1
+        # 模拟未来版本（如 M1-D06c）引入的未知字段，当前代码不认识
+        payload["timeline"] = [{"index": 0, "delay_ms": 12.5}]
         _write_raw(path, json.dumps(payload, ensure_ascii=False))
 
         with pytest.raises(ReplayError, match="版本过新"):
+            find_match(request, tmp_path)
+
+    def test_unknown_field_on_supported_version_is_contract_error(self, tmp_path: Path) -> None:
+        """版本可支持但字段不认识时报「字段不符合契约」，两类根因不能混为一谈。"""
+        request = _make_request()
+        path = Path(record(request, _make_response(), tmp_path))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["timeline"] = [{"index": 0, "delay_ms": 12.5}]
+        _write_raw(path, json.dumps(payload, ensure_ascii=False))
+
+        with pytest.raises(ReplayError, match="字段不符合 Cassette 契约"):
             find_match(request, tmp_path)
 
 

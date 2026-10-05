@@ -1,14 +1,14 @@
 {
-  "generated_at": "2026-10-04T05:00:57.717566+00:00",
-  "task": "M1-D06a VCR 文本录制回放一致率基线",
-  "scope": "文本层面（请求指纹/响应体还原精度）；timing 时序指标待 M1-D06b/D6c 补充",
+  "generated_at": "2026-10-05T02:22:22.190029+00:00",
+  "task": "M1-D06a/b VCR 录制回放一致率与时序录制基线",
+  "scope": "文本层面（请求指纹/响应体还原精度）+ 时序层面（chunk 到达时刻录制精度）；D6b 只录不播，回放调度偏差指标待 M1-D06c 补充",
   "environment": {
     "python": "3.11.9",
     "platform": "Windows"
   },
   "summary": {
-    "recorded_requests": 8,
-    "replay_succeeded": 8,
+    "recorded_requests": 11,
+    "replay_succeeded": 11,
     "unmatched_requests": 0,
     "status_code_match_rate": 1.0,
     "body_match_rate": 1.0,
@@ -16,11 +16,25 @@
     "request_hash_stability_rate": 1.0,
     "hash_length": 16
   },
+  "timing_recording": {
+    "streaming_scenarios": 3,
+    "non_streaming_scenarios": 8,
+    "total_chunks": 12,
+    "avg_chunk_chars": 3.92,
+    "min_chunk_chars": 1,
+    "max_chunk_chars": 7,
+    "first_chunk_zero_rate": 1.0,
+    "arrival_monotonic_rate": 1.0,
+    "three_decimal_precision_rate": 1.0,
+    "max_decimals_observed": 3,
+    "json_round_trip_rate": 1.0,
+    "chunks_concat_matches_content_rate": 1.0
+  },
   "hash_cost": {
     "iterations_per_case": 100,
-    "total_measured_calls": 800,
-    "avg_compute_ms": 0.005,
-    "max_compute_ms": 0.0068
+    "total_measured_calls": 1100,
+    "avg_compute_ms": 0.0057,
+    "max_compute_ms": 0.0077
   },
   "cases": [
     {
@@ -34,7 +48,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.004
+      "hash_compute_ms": 0.0077,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 2,
@@ -47,7 +63,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0053
+      "hash_compute_ms": 0.0051,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 3,
@@ -60,7 +78,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0046
+      "hash_compute_ms": 0.0047,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 4,
@@ -73,7 +93,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0068
+      "hash_compute_ms": 0.0069,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 5,
@@ -86,7 +108,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0059
+      "hash_compute_ms": 0.0056,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 6,
@@ -99,7 +123,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.004
+      "hash_compute_ms": 0.004,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 7,
@@ -112,7 +138,9 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.004
+      "hash_compute_ms": 0.004,
+      "streaming": false,
+      "timing_is_none": true
     },
     {
       "index": 8,
@@ -125,7 +153,69 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0052
+      "hash_compute_ms": 0.006,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 9,
+      "label": "POST 流式响应（4 chunk，起点 0ms）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "70e99cc2b638347c",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.007,
+      "streaming": true,
+      "chunk_count": 4,
+      "first_arrival_ms": 0.0,
+      "last_arrival_ms": 400.0,
+      "arrival_monotonic": true,
+      "max_decimals": 1,
+      "timing_round_trip_ok": true
+    },
+    {
+      "index": 10,
+      "label": "POST 流式响应（3 chunk，起点非 0ms）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "f5639a17dec417c4",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0054,
+      "streaming": true,
+      "chunk_count": 3,
+      "first_arrival_ms": 0.0,
+      "last_arrival_ms": 800.0,
+      "arrival_monotonic": true,
+      "max_decimals": 1,
+      "timing_round_trip_ok": true
+    },
+    {
+      "index": 11,
+      "label": "POST 流式响应（5 chunk，亚毫秒时刻 + 中英混排）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "f47f1ea10fc2001a",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0065,
+      "streaming": true,
+      "chunk_count": 5,
+      "first_arrival_ms": 0.0,
+      "last_arrival_ms": 412.126,
+      "arrival_monotonic": true,
+      "max_decimals": 3,
+      "timing_round_trip_ok": true
     }
   ]
 }
