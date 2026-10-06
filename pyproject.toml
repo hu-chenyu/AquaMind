@@ -106,6 +106,15 @@ target-version = "py311"
 # 源码与测试一并检查
 src = ["src", "tests"]
 
+[tool.ruff.lint]
+# 显式启用 E501：line-length=100 在 ruff 默认规则集里**不生效**（默认只查
+# E4/E7/E9/F），于是"行长 100"此前只是一句无人执行的声明，101+ 字符行不被拦截
+#
+# 用 extend-select 而非 select：select 会**顶掉**默认规则集，E501 到位的同时
+# F401（未使用导入）等既有检查会一起失效——那是把"加严"做成了"放宽"。已实测确认：
+# `--select E501` 只报 E501，`--extend-select E501` 两者都报
+extend-select = ["E501"]
+
 [tool.mypy]
 # 全量严格模式，缺失类型标注即视为错误
 strict = true
