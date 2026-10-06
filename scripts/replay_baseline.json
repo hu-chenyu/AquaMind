@@ -1,10 +1,13 @@
 {
-  "generated_at": "2026-10-05T02:22:22.190029+00:00",
-  "task": "M1-D06a/b VCR 录制回放一致率与时序录制基线",
-  "scope": "文本层面（请求指纹/响应体还原精度）+ 时序层面（chunk 到达时刻录制精度）；D6b 只录不播，回放调度偏差指标待 M1-D06c 补充",
+  "generated_at": "2026-10-06T02:33:48.511111+00:00",
+  "task": "M1-D06a/b/c VCR 录制回放一致率、时序录制与调度基线",
+  "scope": "文本层面（请求指纹/响应体还原精度）+ 时序录制层面（chunk 到达时刻录制精度）+ 时序调度层面（按录下时刻调度回放的实测偏差、倍率折算、旧格式瞬时回放）",
   "environment": {
     "python": "3.11.9",
-    "platform": "Windows"
+    "platform": "Windows",
+    "release": "10",
+    "machine": "AMD64",
+    "timer_note": "时序偏差为真实测量值：Windows 传统定时器粒度约 15.6ms，Linux 通常 1ms 量级，故偏差字段随机器与运行波动属正常"
   },
   "summary": {
     "recorded_requests": 11,
@@ -33,8 +36,225 @@
   "hash_cost": {
     "iterations_per_case": 100,
     "total_measured_calls": 1100,
-    "avg_compute_ms": 0.0057,
-    "max_compute_ms": 0.0077
+    "avg_compute_ms": 0.0076,
+    "max_compute_ms": 0.0139
+  },
+  "timing_replay": {
+    "speeds_measured": [
+      1.0,
+      2.0,
+      0.5
+    ],
+    "streaming_scenarios": 3,
+    "all_text_match": true,
+    "by_speed": {
+      "1.0x": {
+        "speed": 1.0,
+        "scenarios": 3,
+        "chunks": 12,
+        "text_match_rate": 1.0,
+        "total_scheduled_span_ms": 1612.126,
+        "total_elapsed_ms": 1613.34,
+        "elapsed_over_scheduled_ratio": 1.0008,
+        "max_deviation_ms": 0.445,
+        "mean_deviation_ms": 0.246,
+        "deviations_ms": [
+          0.0,
+          0.247,
+          0.204,
+          0.357,
+          0.0,
+          0.222,
+          0.415,
+          0.0,
+          0.338,
+          0.406,
+          0.445,
+          0.314
+        ],
+        "cases": [
+          {
+            "request_hash": "70e99cc2b638347c",
+            "chunk_count": 4,
+            "scheduled_span_ms": 400.0,
+            "elapsed_ms": 400.392,
+            "max_deviation_ms": 0.357,
+            "mean_deviation_ms": 0.202,
+            "text_match": true
+          },
+          {
+            "request_hash": "f5639a17dec417c4",
+            "chunk_count": 3,
+            "scheduled_span_ms": 800.0,
+            "elapsed_ms": 800.474,
+            "max_deviation_ms": 0.415,
+            "mean_deviation_ms": 0.212,
+            "text_match": true
+          },
+          {
+            "request_hash": "f47f1ea10fc2001a",
+            "chunk_count": 5,
+            "scheduled_span_ms": 412.126,
+            "elapsed_ms": 412.474,
+            "max_deviation_ms": 0.445,
+            "mean_deviation_ms": 0.301,
+            "text_match": true
+          }
+        ]
+      },
+      "2.0x": {
+        "speed": 2.0,
+        "scenarios": 3,
+        "chunks": 12,
+        "text_match_rate": 1.0,
+        "total_scheduled_span_ms": 806.063,
+        "total_elapsed_ms": 807.244,
+        "elapsed_over_scheduled_ratio": 1.0015,
+        "max_deviation_ms": 0.782,
+        "mean_deviation_ms": 0.329,
+        "deviations_ms": [
+          0.0,
+          0.524,
+          0.475,
+          0.411,
+          0.0,
+          0.192,
+          0.495,
+          0.0,
+          0.37,
+          0.509,
+          0.782,
+          0.188
+        ],
+        "cases": [
+          {
+            "request_hash": "70e99cc2b638347c",
+            "chunk_count": 4,
+            "scheduled_span_ms": 200.0,
+            "elapsed_ms": 200.44,
+            "max_deviation_ms": 0.524,
+            "mean_deviation_ms": 0.352,
+            "text_match": true
+          },
+          {
+            "request_hash": "f5639a17dec417c4",
+            "chunk_count": 3,
+            "scheduled_span_ms": 400.0,
+            "elapsed_ms": 400.526,
+            "max_deviation_ms": 0.495,
+            "mean_deviation_ms": 0.229,
+            "text_match": true
+          },
+          {
+            "request_hash": "f47f1ea10fc2001a",
+            "chunk_count": 5,
+            "scheduled_span_ms": 206.063,
+            "elapsed_ms": 206.278,
+            "max_deviation_ms": 0.782,
+            "mean_deviation_ms": 0.37,
+            "text_match": true
+          }
+        ]
+      },
+      "0.5x": {
+        "speed": 0.5,
+        "scenarios": 3,
+        "chunks": 12,
+        "text_match_rate": 1.0,
+        "total_scheduled_span_ms": 3224.252,
+        "total_elapsed_ms": 3226.224,
+        "elapsed_over_scheduled_ratio": 1.0006,
+        "max_deviation_ms": 0.752,
+        "mean_deviation_ms": 0.351,
+        "deviations_ms": [
+          0.0,
+          0.632,
+          0.082,
+          0.378,
+          0.0,
+          0.492,
+          0.752,
+          0.0,
+          0.453,
+          0.132,
+          0.573,
+          0.721
+        ],
+        "cases": [
+          {
+            "request_hash": "70e99cc2b638347c",
+            "chunk_count": 4,
+            "scheduled_span_ms": 800.0,
+            "elapsed_ms": 800.417,
+            "max_deviation_ms": 0.632,
+            "mean_deviation_ms": 0.273,
+            "text_match": true
+          },
+          {
+            "request_hash": "f5639a17dec417c4",
+            "chunk_count": 3,
+            "scheduled_span_ms": 1600.0,
+            "elapsed_ms": 1600.784,
+            "max_deviation_ms": 0.752,
+            "mean_deviation_ms": 0.415,
+            "text_match": true
+          },
+          {
+            "request_hash": "f47f1ea10fc2001a",
+            "chunk_count": 5,
+            "scheduled_span_ms": 824.252,
+            "elapsed_ms": 825.023,
+            "max_deviation_ms": 0.721,
+            "mean_deviation_ms": 0.376,
+            "text_match": true
+          }
+        ]
+      }
+    },
+    "instant_replay": {
+      "legacy_timing_none": {
+        "instant": true,
+        "chunk_count": 1,
+        "elapsed_ms": 0.011,
+        "no_sleep_within_ceiling": true,
+        "text_matches_play": true,
+        "max_deviation_ms": 0.0
+      },
+      "empty_timing": {
+        "instant": true,
+        "chunk_count": 1,
+        "elapsed_ms": 0.018,
+        "no_sleep_within_ceiling": true,
+        "text_matches_play": true,
+        "max_deviation_ms": 0.0
+      }
+    },
+    "speed_guard": {
+      "checked": 4,
+      "all_rejected": true,
+      "cases": [
+        {
+          "speed": "0.0",
+          "rejected": true
+        },
+        {
+          "speed": "-1.0",
+          "rejected": true
+        },
+        {
+          "speed": "nan",
+          "rejected": true
+        },
+        {
+          "speed": "inf",
+          "rejected": true
+        }
+      ]
+    },
+    "hash_guard": {
+      "tampered_hash_rejected": true,
+      "error_type": "ReplayError"
+    }
   },
   "cases": [
     {
@@ -48,7 +268,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0077,
+      "hash_compute_ms": 0.0042,
       "streaming": false,
       "timing_is_none": true
     },
@@ -63,7 +283,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0051,
+      "hash_compute_ms": 0.0052,
       "streaming": false,
       "timing_is_none": true
     },
@@ -78,7 +298,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0047,
+      "hash_compute_ms": 0.0059,
       "streaming": false,
       "timing_is_none": true
     },
@@ -93,7 +313,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0069,
+      "hash_compute_ms": 0.0097,
       "streaming": false,
       "timing_is_none": true
     },
@@ -108,7 +328,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0056,
+      "hash_compute_ms": 0.0059,
       "streaming": false,
       "timing_is_none": true
     },
@@ -123,7 +343,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.004,
+      "hash_compute_ms": 0.0107,
       "streaming": false,
       "timing_is_none": true
     },
@@ -138,7 +358,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.004,
+      "hash_compute_ms": 0.0095,
       "streaming": false,
       "timing_is_none": true
     },
@@ -153,7 +373,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.006,
+      "hash_compute_ms": 0.0079,
       "streaming": false,
       "timing_is_none": true
     },
@@ -168,7 +388,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.007,
+      "hash_compute_ms": 0.0054,
       "streaming": true,
       "chunk_count": 4,
       "first_arrival_ms": 0.0,
@@ -188,7 +408,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0054,
+      "hash_compute_ms": 0.0055,
       "streaming": true,
       "chunk_count": 3,
       "first_arrival_ms": 0.0,
@@ -208,7 +428,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0065,
+      "hash_compute_ms": 0.0139,
       "streaming": true,
       "chunk_count": 5,
       "first_arrival_ms": 0.0,

@@ -3,8 +3,9 @@
 覆盖：Cassette 契约、request_hash 稳定性与版本校验、record 落盘、
 find_match 精确匹配（无匹配/损坏/指纹变更）、format_version 前向兼容闸口、
 play 还原、ReplayedResponse 读取面（text/content/json）、异常消息脱敏，
-以及 M1-D06b 的 chunk 到达时序录制（ChunkTiming 契约、归一化、3 位小数、
-序列化往返、v1 旧 cassette 兼容）。
+M1-D06b 的 chunk 到达时序录制（ChunkTiming 契约、归一化、3 位小数、
+序列化往返、v1 旧 cassette 兼容），以及 M1-D06c 的时序调度回放（倍率缩放、
+瞬时回放兼容、时序偏差测量、指纹校验在时序回放中仍然生效）。
 
 所有用例只用 tmp_path 构造临时 cassette 目录，不触达任何真实 API（CI 零 key）。
 """
@@ -12,6 +13,7 @@ play 还原、ReplayedResponse 读取面（text/content/json）、异常消息�
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -27,8 +29,10 @@ from aquamind.replay import (
     ResponseInfo,
     find_match,
     play,
+    play_timed,
     record,
     replay_request,
+    replay_request_timed,
 )
 
 # 出现在请求体里的敏感样本：用于验证它不会随异常字符串进入日志
@@ -42,6 +46,44 @@ _STREAM_CHUNKS: list[tuple[float, str]] = [
     (450.0, "的"),
     (610.5, "时序"),
 ]
+# _STREAM_CHUNKS 归一化后的到达时刻(ms)：首片恒 0.0，其余为相对首片的间隔。
+# 时序回放测试据此推导 sleep 参数与「计划到达时刻」的期望值，避免在用例里
+# 再手抄一份归一化结果（抄错一处，测试就会把错误实现判成正确）
+_STREAM_ARRIVALS_MS = [0.0, 100.235, 350.0, 510.5]
+# 时序回放专用的「小间隔」chunk 列表：(到达时刻毫秒, chunk 文本)。
+# 间隔取 10/25/25ms：足够小以免拖慢测试，又大于 sleep 的最小有效粒度；
+# 相邻间隔不相等，才能让「间隔是否被正确折算」在断言里显形
+_FAST_CHUNKS: list[tuple[float, str]] = [
+    (0.0, "回"),
+    (10.0, "放"),
+    (35.0, "偏"),
+    (60.0, "差"),
+]
+# _FAST_CHUNKS 归一化后的到达时刻(ms)
+_FAST_ARRIVALS_MS = [0.0, 10.0, 35.0, 60.0]
+# 时序偏差阈值（毫秒）：取两平台中较宽的一个。Windows 传统定时器粒度约
+# 15.6ms，单片 sleep 因此可能偏晚十几毫秒；Linux 上通常在 1ms 内。
+# 绝对时刻对齐保证误差不累积，故单片偏差而非累计偏差是判断依据
+_MAX_DEVIATION_MS = 50.0
+
+
+@pytest.fixture
+def sleep_calls(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """把 ``time.sleep`` 换成只记录调用参数的假实现。
+
+    时序回放的正确性由「每片睡了多久」定义，与墙钟抖动无关。记录 sleep 参数
+    让倍率折算可被精确断言，同时让 sleep 相关的用例不产生任何真实等待。
+
+    Returns:
+        list[float]: 每次 ``time.sleep`` 收到的参数（秒），按调用顺序。
+    """
+    calls: list[float] = []
+
+    def _fake_sleep(seconds: float) -> None:
+        calls.append(seconds)
+
+    monkeypatch.setattr(time, "sleep", _fake_sleep)
+    return calls
 
 
 def _make_request(
@@ -605,6 +647,236 @@ def _record_and_load(tmp_path: Path, chunks: list[tuple[float, str]]) -> Cassett
     cassette = find_match(request, tmp_path)
     assert cassette is not None
     return cassette
+
+
+def _record_timed_cassette(tmp_path: Path, chunks: list[tuple[float, str]]) -> Cassette:
+    """录制一份「响应体 == 各 chunk 增量拼接」的流式 cassette 并回读。
+
+    刻意让响应体等于拼接结果：这样「时序回放的文本与录制时一致」才有可断言的
+    基准，否则拼接对不对只能靠用例自己再抄一份期望字符串。
+
+    Args:
+        tmp_path: pytest 提供的临时目录。
+        chunks: 传入 record() 的 chunk 列表。
+
+    Returns:
+        Cassette: find_match 回读到的 cassette。
+    """
+    request = _make_request()
+    response = _make_response(body="".join(content for _, content in chunks))
+    record(request, response, tmp_path, chunks=chunks)
+    cassette = find_match(request, tmp_path)
+    assert cassette is not None
+    return cassette
+
+
+class TestPlayTimed:
+    """测试时序调度回放（M1-D06c）。
+
+    覆盖三件事：按录下时刻调度（首片立即、后续按间隔 sleep）、倍率的折算方向
+    （>1 加速、<1 减速）、以及无时序时退化为瞬时回放。另有时序偏差测量与
+    指纹校验的等价性。倍率相关断言全部走「sleep 参数」与「计划到达时刻」两条
+    确定性口径，不依赖墙钟。
+    """
+
+    def test_chunks_arrive_in_recorded_order(self, tmp_path: Path) -> None:
+        """时序回放按录制顺序逐片产出，文本逐片一致（时序不改内容）。"""
+        cassette = _record_timed_cassette(tmp_path, _STREAM_CHUNKS)
+        stream = play_timed(cassette)
+        assert list(stream) == [content for _, content in _STREAM_CHUNKS]
+        # 拼接结果等于录制时的完整响应文本：时序回放只改到达时间
+        assert stream.text == "流式响应的时序"
+        # 有 timing 即走时序路径，不是瞬时回放
+        assert stream.instant is False
+
+    def test_sleeps_recorded_intervals_at_speed_1(self, tmp_path: Path, sleep_calls) -> None:
+        """原速时：首片不睡，其余各片睡到**自己的**计划时刻。
+
+        mock 掉 sleep 之后时钟不再推进，于是「剩余等待」恰好等于该片计划时刻
+        （相对首片）。这正是绝对时刻对齐的形状：sleep 参数是累计的计划时刻，
+        而不是「上一片间隔 + 本片间隔」的逐片累加。若实现改成逐片 sleep 间隔，
+        这组断言会立刻失败——而那样会把单片的调度抖动累积到后续每一片。
+        """
+        cassette = _record_timed_cassette(tmp_path, _STREAM_CHUNKS)
+        list(play_timed(cassette))
+        expected = [arrival / 1000 for arrival in _STREAM_ARRIVALS_MS[1:]]
+        # 首片 arrival_ms=0 → 不产生 sleep 调用，故调用次数 = chunk 数 - 1
+        assert len(sleep_calls) == len(_STREAM_CHUNKS) - 1
+        # 1ms 容差吸收真实时钟在多次迭代间的推进（量级为微秒）
+        assert sleep_calls == pytest.approx(expected, abs=1e-3)
+
+    def test_speed_2_halves_intervals(self, tmp_path: Path, sleep_calls) -> None:
+        """speed=2（加速）：每片睡到提前一半的计划时刻。
+
+        断言用累计计划时刻而非逐片间隔，是因为 mock 掉 sleep 后时钟不推进；
+        真实运行时逐片补的差额正是间隔本身（见上面的说明）。
+        """
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        stream = play_timed(cassette, speed=2.0)
+        list(stream)
+        expected = [arrival / 1000 / 2.0 for arrival in _FAST_ARRIVALS_MS[1:]]
+        assert sleep_calls == pytest.approx(expected, abs=1e-3)
+        # 计划到达时刻是纯算术，可精确断言：它证明折算方向没错（加速=更早）
+        assert list(stream.deviation.expected_ms) == [
+            arrival / 2.0 for arrival in _FAST_ARRIVALS_MS
+        ]
+        assert stream.speed == 2.0
+        assert stream.deviation.speed == 2.0
+
+    def test_speed_0_5_doubles_intervals(self, tmp_path: Path, sleep_calls) -> None:
+        """speed=0.5（减速）：每片睡到推后一倍的计划时刻。"""
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        stream = play_timed(cassette, speed=0.5)
+        list(stream)
+        expected = [arrival / 1000 / 0.5 for arrival in _FAST_ARRIVALS_MS[1:]]
+        assert sleep_calls == pytest.approx(expected, abs=1e-3)
+        # 减速=更晚：若误写成乘 speed，这组断言会立刻失败
+        assert list(stream.deviation.expected_ms) == [
+            arrival / 0.5 for arrival in _FAST_ARRIVALS_MS
+        ]
+        assert stream.speed == 0.5
+
+    def test_huge_speed_yields_each_chunk_without_sleep(self, tmp_path: Path, sleep_calls) -> None:
+        """speed=1000：间隔趋近 0 时退化为「不 sleep」，但**仍逐片产出**。
+
+        退化口径必须是逐片而不是一次性给全：流式使用方（打字机、进度条）依赖
+        chunk 边界，把 4 片合并成 1 片会让下游拿到的结构整体变形。
+        """
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        stream = play_timed(cassette, speed=1000.0)
+        chunks = list(stream)
+        assert chunks == [content for _, content in _FAST_CHUNKS]
+        # 4 片 = 4 次产出，不是 1 次
+        assert stream.deviation.chunk_count == len(_FAST_CHUNKS)
+        # 间隔 = 25ms/1000 = 0.025ms，低于 sleep 的最小有效粒度（1ms），直接不睡：
+        # 省掉的是注定无效的系统调用，逐片产出与文本一致性完全不受影响
+        assert sleep_calls == []
+
+    @pytest.mark.parametrize("bad_speed", [0.0, -1.0, -0.5, float("nan"), float("inf")])
+    def test_invalid_speed_raises(self, tmp_path: Path, bad_speed: float) -> None:
+        """非法倍率显式报错，不静默回退成原速（否则下游验的是错误的条件）。"""
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        with pytest.raises(ReplayError, match="speed 必须为正数") as excinfo:
+            play_timed(cassette, bad_speed)
+        assert "request_hash" in str(excinfo.value)
+
+    def test_invalid_speed_reports_value_in_context(self, tmp_path: Path) -> None:
+        """报错把实际倍率与请求指纹留在 context 里，供调用方显式读取定位。"""
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        with pytest.raises(ReplayError, match="speed") as excinfo:
+            play_timed(cassette, -1.0)
+        assert excinfo.value.context["speed"] == -1.0
+        assert excinfo.value.context["request_hash"] == cassette.request_hash
+
+    def test_deviation_is_empty_before_any_chunk_is_consumed(self, tmp_path: Path) -> None:
+        """尚未产出任何 chunk 时偏差统计为空，汇总指标为 0.0（而非抛错）。"""
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        deviation = play_timed(cassette).deviation
+        assert deviation.chunk_count == 0
+        assert deviation.deviations_ms == ()
+        assert deviation.max_deviation_ms == 0.0
+        assert deviation.mean_deviation_ms == 0.0
+
+    def test_deviation_stays_within_platform_tolerance(self, tmp_path: Path) -> None:
+        """真实 sleep 下逐片到达时刻偏差在平台定时器粒度内。
+
+        这里用真实 sleep（而非 mock）：偏差是「实际到达时刻」与计划时刻之差，
+        mock 掉 sleep 只会把它恒测成 0，等于没测。首片零等待，后续各片偏差
+        受单次 sleep 精度约束（Windows 约 15.6ms），阈值取两平台较宽值。
+        """
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        stream = play_timed(cassette)
+        assert "".join(stream) == "回放偏差"
+        deviation = stream.deviation
+        assert deviation.chunk_count == len(_FAST_CHUNKS)
+        # 首片立即产出：计划与实际都是 0.0，偏差恒为 0
+        assert deviation.expected_ms[0] == 0.0
+        assert deviation.actual_ms[0] == 0.0
+        assert deviation.max_deviation_ms < _MAX_DEVIATION_MS
+        assert deviation.mean_deviation_ms < _MAX_DEVIATION_MS
+        # 逐片偏差与实际到达时刻一并可读，供报告与基线引用
+        assert len(deviation.deviations_ms) == len(_FAST_CHUNKS)
+        assert deviation.actual_ms[-1] > 0.0
+
+    def test_legacy_cassette_replays_instantly(self, tmp_path: Path, sleep_calls) -> None:
+        """timing=None（v1 旧格式 / 非流式响应）：一次性给全，不 sleep。"""
+        request = _make_request()
+        record(request, _make_response(body="旧格式响应"), tmp_path)
+        cassette = find_match(request, tmp_path)
+        assert cassette is not None
+        stream = play_timed(cassette)
+        # 瞬时回放产出恰好 1 项，且就是 play() 的完整响应文本
+        assert list(stream) == ["旧格式响应"]
+        assert stream.instant is True
+        assert sleep_calls == []
+        # 与 D06a 的 play() 口径一致：同一份 cassette 两条入口给出同样的文本
+        assert stream.text == play(cassette).text
+
+    def test_empty_timing_replays_instantly(self, tmp_path: Path, sleep_calls) -> None:
+        """timing=[]（流式但未采集到 chunk）：同样瞬时回放，不 sleep。"""
+        cassette = _record_and_load(tmp_path, [])
+        assert cassette.timing == []
+        stream = play_timed(cassette)
+        assert list(stream) == [cassette.response_body]
+        assert stream.instant is True
+        assert sleep_calls == []
+
+    def test_out_of_order_arrival_never_sleeps_negative(
+        self, tmp_path: Path, sleep_calls
+    ) -> None:
+        """录到乱序/负间隔时按绝对时刻对齐，不把负数交给 time.sleep。
+
+        ``record()`` 允许 ``arrival_ms`` 为负（表达「比首片还早到达」）。逐片
+        sleep 间隔的实现在这里会算出负间隔，Windows 上 sleep(负数) 抛
+        ValueError——绝对时刻对齐则天然跳过（剩余等待 ≤ 0 即不睡）。
+        """
+        cassette = _record_timed_cassette(tmp_path, [(0.0, "先"), (-20.0, "却更早")])
+        stream = play_timed(cassette)
+        assert list(stream) == ["先", "却更早"]
+        assert all(call > 0 for call in sleep_calls)
+        assert sleep_calls == []
+
+    def test_replay_request_timed_plays_matched_cassette(self, tmp_path: Path) -> None:
+        """时序回放入口：命中 cassette 后按录下时刻调度产出。"""
+        request = _make_request()
+        record(
+            request,
+            _make_response(body="回放"),
+            tmp_path,
+            chunks=[(0.0, "回"), (12.0, "放")],
+        )
+        stream = replay_request_timed(request, tmp_path)
+        assert list(stream) == ["回", "放"]
+        assert stream.deviation.chunk_count == 2
+
+    def test_replay_request_timed_raises_when_no_cassette(self, tmp_path: Path) -> None:
+        """无匹配时显式报错，不静默给一个「看起来正常」的流。"""
+        with pytest.raises(ReplayError, match="未找到匹配的 cassette") as excinfo:
+            replay_request_timed(_make_request(), tmp_path)
+        assert "cassette_dir" in str(excinfo.value)
+
+    def test_replay_request_timed_rejects_bad_speed_before_touching_disk(
+        self, tmp_path: Path
+    ) -> None:
+        """倍率非法是调用方的错，不该被「文件恰好不存在」这类数据问题掩盖。"""
+        with pytest.raises(ReplayError, match="speed 必须为正数"):
+            replay_request_timed(_make_request(), tmp_path, speed=0.0)
+        # 空目录：若顺序反了，这里会先抛「未找到匹配的 cassette」
+
+    def test_hash_mismatch_still_raises_in_timed_replay(self, tmp_path: Path) -> None:
+        """指纹校验在时序回放中依然生效：cassette 被手改 → 显式报错。
+
+        按错误节奏调度一段**别人的**响应比文本错更隐蔽：内容看着合理、节奏也
+        看着正常，只是整段都不是这次请求的。因此指纹闸口不能因为换入口而松。
+        """
+        request = _make_request()
+        path = Path(record(request, _make_response(body="回放"), tmp_path, chunks=[(0.0, "回")]))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["request_hash"] = "0123456789abcdef"
+        _write_raw(path, json.dumps(payload, ensure_ascii=False))
+
+        with pytest.raises(ReplayError, match="请求指纹已变更，请重新录制"):
+            replay_request_timed(request, tmp_path)
 
 
 class TestFormatVersion:

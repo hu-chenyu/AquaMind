@@ -1,18 +1,24 @@
-"""生成 scripts/replay_baseline.json：VCR 录制回放的一致率与时序录制基线。
+"""生成 scripts/replay_baseline.json：VCR 录制回放的一致率、时序录制与调度基线。
 
 运行（在仓库根目录）：
     .venv\\Scripts\\python.exe examples/replay_demo/generate_baseline.py
 
 口径说明：
-    本基线覆盖两层——
+    本基线覆盖三层——
 
     1. **文本层面**（M1-D06a）：状态码/响应体/text 逐字一致率与指纹计算开销；
-    2. **时序层面**（M1-D06b）：流式响应的 chunk 到达时刻录制精度（归一化、
-       单调性、3 位小数精度、JSON 往返一致性）。D6b 只录不播，故**不含**
-       「回放调度偏差」类指标——那属于 M1-D06c（时序调度回放与倍率）。
+    2. **时序录制层面**（M1-D06b）：流式响应的 chunk 到达时刻录制精度（归一化、
+       单调性、3 位小数精度、JSON 往返一致性）；
+    3. **时序调度层面**（M1-D06c）：按录下时刻调度回放的实测偏差（逐片偏差的
+       最大/平均），覆盖原速、加速 2x、减速 0.5x 三档，并验证无时序时的瞬时
+       回放口径与 speed 守卫。
 
-复现性：除 generated_at 与指纹计算耗时外，所有字段均为确定性结果——
-    一致率类字段重跑必然相同，耗时类字段随机器波动属正常。
+复现性：
+    ① 确定性字段（一致率类、偏差守卫类）重跑必然相同；
+    ② 时序偏差与耗时字段是**真实测量**，随机器与运行波动属正常——它们正是
+       「调度准不准」这一问题的答案，不应被平滑成固定值；
+    ③ 本次三档倍率 + 瞬时回放的实测 sleep 合计约数秒，脚本运行时间因此
+       明显长于 D06b 版本，属预期。
 """
 
 from __future__ import annotations
@@ -28,13 +34,16 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
+from aquamind.exceptions import ReplayError
 from aquamind.replay import (
     Cassette,
     RequestInfo,
     ResponseInfo,
     find_match,
     play,
+    play_timed,
     record,
+    replay_request_timed,
 )
 
 # 仓库根目录：本脚本位于 <repo>/examples/replay_demo/generate_baseline.py
@@ -45,6 +54,13 @@ BASELINE_PATH = REPO_ROOT / "scripts" / "replay_baseline.json"
 HASH_ITERATIONS = 100
 # arrival_ms 保留的小数位（与 replay 侧口径一致，用于精度校验）
 ARRIVAL_DECIMALS = 3
+# 时序调度回放测量的三档倍率：原速 + 加速 2x + 减速 0.5x（M1-D06c）
+TIMING_SPEEDS: tuple[float, ...] = (1.0, 2.0, 0.5)
+# 非正/非有限倍率：用于验证 speed 守卫必须显式报错而非静默回退成原速
+INVALID_SPEEDS: tuple[float, ...] = (0.0, -1.0, float("nan"), float("inf"))
+# 瞬时回放的耗时上限（毫秒）：该路径不 sleep，只构造响应对象；
+# 实测远低于任何一条时序间隔，是「没有等待」的可核对证据
+_INSTANT_ELAPSED_CEILING_MS = 50.0
 # URL 前缀（本地假端点，本脚本不发起任何真实网络请求）
 _BASE_URL = "http://127.0.0.1:8000/v1/chat/completions"
 
@@ -294,6 +310,176 @@ def _build_scenarios() -> list[Scenario]:
     return scenarios
 
 
+def _measure_speed(cassettes: list[Cassette], speed: float) -> dict[str, Any]:
+    """按给定倍率对全部流式场景做时序调度回放，并汇总时序偏差（M1-D06c）。
+
+    这里**真实 sleep**，不 mock：偏差回答的正是「调度准不准」，把 sleep 换掉
+    只会让偏差恒测成 0。调度内部按绝对时刻对齐，故单片抖动不会累积到后续各片，
+    测得的最大偏差也就反映了单次定时器精度而非累计漂移。
+
+    Args:
+        cassettes: 已加载的流式 cassette 列表（``timing`` 非空）。
+        speed: 回放倍率。
+
+    Returns:
+        dict[str, Any]: 该倍率下的文本一致率、实测/计划耗时、逐片偏差与汇总。
+    """
+    case_reports: list[dict[str, Any]] = []
+    deviations: list[float] = []
+    total_elapsed = 0.0
+    total_scheduled = 0.0
+    text_hits = 0
+
+    for cassette in cassettes:
+        timing = cassette.timing or []
+        recorded_text = "".join(chunk.text for chunk in timing)
+        stream = play_timed(cassette, speed=speed)
+        started = time.perf_counter()
+        chunks = list(stream)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        deviation = stream.deviation
+
+        # 文本一致性：时序回放只改到达时间，逐片拼接必须与录制时完全相同
+        text_hit = "".join(chunks) == recorded_text
+        text_hits += int(text_hit)
+        deviations.extend(abs(value) for value in deviation.deviations_ms)
+        scheduled_span = (timing[-1].arrival_ms - timing[0].arrival_ms) / speed
+        total_elapsed += elapsed_ms
+        total_scheduled += scheduled_span
+        case_reports.append(
+            {
+                "request_hash": cassette.request_hash,
+                "chunk_count": deviation.chunk_count,
+                "scheduled_span_ms": round(scheduled_span, 3),
+                "elapsed_ms": round(elapsed_ms, 3),
+                "max_deviation_ms": deviation.max_deviation_ms,
+                "mean_deviation_ms": deviation.mean_deviation_ms,
+                "text_match": text_hit,
+            }
+        )
+
+    return {
+        "speed": speed,
+        "scenarios": len(cassettes),
+        "chunks": len(deviations),
+        "text_match_rate": round(text_hits / len(cassettes), 4) if cassettes else 0.0,
+        "total_scheduled_span_ms": round(total_scheduled, 3),
+        "total_elapsed_ms": round(total_elapsed, 3),
+        "elapsed_over_scheduled_ratio": (
+            round(total_elapsed / total_scheduled, 4) if total_scheduled else None
+        ),
+        "max_deviation_ms": round(max(deviations, default=0.0), 3),
+        "mean_deviation_ms": (
+            round(statistics.fmean(deviations), 3) if deviations else 0.0
+        ),
+        "deviations_ms": [round(value, 3) for value in deviations],
+        "cases": case_reports,
+    }
+
+
+def _measure_instant_replay(cassette: Cassette) -> dict[str, Any]:
+    """量一次瞬时回放：产出 1 项、零 sleep、耗时远小于任何调度间隔。
+
+    Args:
+        cassette: ``timing`` 为 None 或空的 cassette。
+
+    Returns:
+        dict[str, Any]: instant 标记、产出项数、耗时、文本一致标记。
+    """
+    stream = play_timed(cassette)
+    started = time.perf_counter()
+    chunks = list(stream)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    return {
+        "instant": stream.instant,
+        "chunk_count": stream.deviation.chunk_count,
+        "elapsed_ms": round(elapsed_ms, 3),
+        "no_sleep_within_ceiling": elapsed_ms < _INSTANT_ELAPSED_CEILING_MS,
+        "text_matches_play": "".join(chunks) == play(cassette).text,
+        "max_deviation_ms": stream.deviation.max_deviation_ms,
+    }
+
+
+def _verify_legacy_and_empty_timing(cassette_dir: Path) -> dict[str, Any]:
+    """验证「没有时序可调度」时的两条瞬时回放口径。
+
+    两者的源数据不同、代码路径相同（``timing`` 假值即走瞬时回放）：
+    ``timing=None``（旧格式 / 非流式响应）与 ``timing=[]``（流式但未采集到
+    chunk）。分别单独录一份，避免与流式场景共用同一请求指纹而覆盖掉原文件。
+
+    Args:
+        cassette_dir: cassette 临时目录。
+
+    Returns:
+        dict[str, Any]: 两种形态各自的瞬时回放量测结果。
+    """
+    results: dict[str, Any] = {}
+    for label, url, chunks in (
+        ("legacy_timing_none", f"{_BASE_URL}?instant=legacy", None),
+        ("empty_timing", f"{_BASE_URL}?instant=empty", []),
+    ):
+        request = RequestInfo(
+            method="POST",
+            url=url,
+            headers={"Content-Type": "application/json"},
+            body=json.dumps(
+                {"model": "demo-model", "stream": chunks is not None},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        record(request, _streamed_response("瞬时回放"), cassette_dir, chunks=chunks)
+        cassette = find_match(request, cassette_dir)
+        assert cassette is not None
+        results[label] = _measure_instant_replay(cassette)
+    return results
+
+
+def _verify_speed_guard(cassette: Cassette) -> dict[str, Any]:
+    """验证非法倍率显式报错，而不是静默按原速回放。
+
+    Args:
+        cassette: 任一可用的流式 cassette。
+
+    Returns:
+        dict[str, Any]: 每个非法倍率的报错标记与汇总。
+    """
+    checks: list[dict[str, Any]] = []
+    for bad_speed in INVALID_SPEEDS:
+        try:
+            play_timed(cassette, bad_speed)
+        except ReplayError:
+            checks.append({"speed": repr(bad_speed), "rejected": True})
+        else:
+            checks.append({"speed": repr(bad_speed), "rejected": False})
+    return {
+        "checked": len(checks),
+        "all_rejected": all(item["rejected"] for item in checks),
+        "cases": checks,
+    }
+
+
+def _verify_hash_guard(request: RequestInfo, cassette_dir: Path) -> dict[str, Any]:
+    """验证时序回放入口仍然执行指纹校验（cassette 被手改 → 显式报错）。
+
+    Args:
+        request: 已录制的流式请求。
+        cassette_dir: cassette 临时目录。
+
+    Returns:
+        dict[str, Any]: 篡改 hash 后时序回放是否被拦截。
+    """
+    path = cassette_dir / f"{Cassette.compute_request_hash(request)}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["request_hash"] = "0123456789abcdef"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        replay_request_timed(request, cassette_dir)
+    except ReplayError:
+        return {"tampered_hash_rejected": True, "error_type": "ReplayError"}
+    return {"tampered_hash_rejected": False, "error_type": None}
+
+
 def main() -> None:
     """跑完录制-回放全流程并写出基线数据。
 
@@ -323,6 +509,10 @@ def main() -> None:
     roundtrip_hits = 0
     concat_hits = 0
     max_decimals_seen = 0
+
+    # M1-D06c 时序调度测量：收集流式 cassette，录完统一按三档倍率调度回放。
+    # 收集而不是就地测量，是为了不把 sleep 混进 D06b 的录制统计里
+    streamed_cassettes: list[Cassette] = []
 
     # 基线统计用独立临时目录，避免污染示例 cassette 目录。
     # 用上下文管理器而非 mkdtemp：后者在脚本退出后不清理，每次运行都在 %TEMP%
@@ -378,6 +568,7 @@ def main() -> None:
                 }
             else:
                 timing_scenarios += 1
+                streamed_cassettes.append(cassette)
                 observed = cassette.timing or []
                 arrivals = [chunk.arrival_ms for chunk in observed]
                 actual = [(chunk.index, chunk.arrival_ms, chunk.text) for chunk in observed]
@@ -429,15 +620,33 @@ def main() -> None:
                 }
             )
 
+    # ── M1-D06c：时序调度回放（真实 sleep，实测偏差）──────────────
+        # 三档倍率按顺序测量：原速在最前，后续档位的对比基准就是它的数字
+        by_speed = [_measure_speed(streamed_cassettes, speed) for speed in TIMING_SPEEDS]
+        instant_report = _verify_legacy_and_empty_timing(cassette_dir)
+        speed_guard = _verify_speed_guard(streamed_cassettes[0])
+        hash_guard = _verify_hash_guard(
+            next(s.request for s in scenarios if s.chunks is not None), cassette_dir
+        )
+
     total = len(scenarios)
     report: dict[str, Any] = {
         "generated_at": datetime.now(UTC).isoformat(),
-        "task": "M1-D06a/b VCR 录制回放一致率与时序录制基线",
+        "task": "M1-D06a/b/c VCR 录制回放一致率、时序录制与调度基线",
         "scope": (
-            "文本层面（请求指纹/响应体还原精度）+ 时序层面（chunk 到达时刻录制精度）；"
-            "D6b 只录不播，回放调度偏差指标待 M1-D06c 补充"
+            "文本层面（请求指纹/响应体还原精度）+ 时序录制层面（chunk 到达时刻录制精度）"
+            "+ 时序调度层面（按录下时刻调度回放的实测偏差、倍率折算、旧格式瞬时回放）"
         ),
-        "environment": {"python": platform.python_version(), "platform": platform.system()},
+        "environment": {
+            "python": platform.python_version(),
+            "platform": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "timer_note": (
+                "时序偏差为真实测量值：Windows 传统定时器粒度约 15.6ms，"
+                "Linux 通常 1ms 量级，故偏差字段随机器与运行波动属正常"
+            ),
+        },
         "summary": {
             "recorded_requests": total,
             "replay_succeeded": replayed_ok,
@@ -467,6 +676,15 @@ def main() -> None:
             "total_measured_calls": total * HASH_ITERATIONS,
             "avg_compute_ms": round(statistics.fmean(hash_ms_samples), 4),
             "max_compute_ms": round(max(hash_ms_samples), 4),
+        },
+        "timing_replay": {
+            "speeds_measured": list(TIMING_SPEEDS),
+            "streaming_scenarios": len(streamed_cassettes),
+            "all_text_match": all(item["text_match_rate"] == 1.0 for item in by_speed),
+            "by_speed": {f"{item['speed']}x": item for item in by_speed},
+            "instant_replay": instant_report,
+            "speed_guard": speed_guard,
+            "hash_guard": hash_guard,
         },
         "cases": per_case,
     }
@@ -503,6 +721,26 @@ def main() -> None:
     print(
         f"  timing JSON 往返一致 {timing_report['json_round_trip_rate']:.2%}"
         f" / 增量拼接对齐响应体 {timing_report['chunks_concat_matches_content_rate']:.2%}"
+    )
+    replay_report = report["timing_replay"]
+    for item in by_speed:
+        print(
+            f"  调度回放 {item['speed']}x: {item['chunks']} 片 / 文本一致率"
+            f" {item['text_match_rate']:.2%} / 计划 {item['total_scheduled_span_ms']:.1f}ms"
+            f" → 实测 {item['total_elapsed_ms']:.1f}ms / 偏差 max {item['max_deviation_ms']:.3f}ms"
+            f" / mean {item['mean_deviation_ms']:.3f}ms"
+        )
+    legacy = instant_report["legacy_timing_none"]
+    empty = instant_report["empty_timing"]
+    print(
+        f"  瞬时回放: timing=None 产出 {legacy['chunk_count']} 项耗时"
+        f" {legacy['elapsed_ms']:.3f}ms / timing=[] 产出 {empty['chunk_count']} 项耗时"
+        f" {empty['elapsed_ms']:.3f}ms（均不 sleep）"
+    )
+    print(
+        f"  守卫: 非法倍率 {replay_report['speed_guard']['checked']} 种全部拦截="
+        f"{replay_report['speed_guard']['all_rejected']} / 时序回放拦截篡改 hash="
+        f"{replay_report['hash_guard']['tampered_hash_rejected']}"
     )
 
 
