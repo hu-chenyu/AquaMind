@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from aquamind.exceptions import ReplayError
 from aquamind.replay import (
@@ -174,7 +175,10 @@ def _build_scenarios() -> list[Scenario]:
         Scenario(
             label="POST 中文 body",
             request=RequestInfo(
-                method="POST", url=_BASE_URL, headers=json_headers, body=_payload("demo-model", "你好")
+                method="POST",
+                url=_BASE_URL,
+                headers=json_headers,
+                body=_payload("demo-model", "你好"),
             ),
             response=ResponseInfo(
                 status_code=200,
@@ -377,30 +381,58 @@ def _measure_speed(cassettes: list[Cassette], speed: float) -> dict[str, Any]:
     }
 
 
-def _measure_instant_replay(cassette: Cassette) -> dict[str, Any]:
-    """量一次瞬时回放：产出 1 项、零 sleep、耗时远小于任何调度间隔。
+def _measure_instant_replay(
+    cassette: Cassette, control_cassette: Cassette
+) -> dict[str, Any]:
+    """量一次瞬时回放：产出 1 项，且 ``time.sleep`` 被调用 0 次。
+
+    「不 sleep」此前是用耗时上界（< 50ms）**间接推断**的，机器一忙就可能凭空
+    超限，让一条本来正确的记录变成假阴性。这里改为把 ``time.sleep`` 换成计数桩，
+    直接数它被调用了几次——瞬时回放一秒都不该等，判据因此是确定性的。
+
+    桩的作用域严格限定在 with 块内：原速/加速/减速三档的偏差测量需要**真实**
+    sleep，被桩吞掉就测不出调度精度了。块外另做一次「阳性对照」——同一根桩
+    插到一份带 timing 的 cassette 上应当数到若干次调用，它证明桩确实接到了
+    sleep，而不是「0 次」来自桩没生效。
 
     Args:
-        cassette: ``timing`` 为 None 或空的 cassette。
+        cassette: ``timing`` 为 None 或空的 cassette（被测对象）。
+        control_cassette: ``timing`` 非空的 cassette（阳性对照）。
 
     Returns:
-        dict[str, Any]: instant 标记、产出项数、耗时、文本一致标记。
+        dict[str, Any]: instant 标记、产出项数、sleep 调用次数与阳性对照次数、
+            耗时、文本一致标记。
     """
-    stream = play_timed(cassette)
-    started = time.perf_counter()
-    chunks = list(stream)
-    elapsed_ms = (time.perf_counter() - started) * 1000
+    with patch("time.sleep") as mocked_sleep:
+        started = time.perf_counter()
+        stream = play_timed(cassette)
+        chunks = list(stream)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        instant_sleep_calls = mocked_sleep.call_count
+    # 阳性对照：同一根桩插到有时序的 cassette 上，必须数到调用，否则上面的
+    # 0 次只说明桩没接上。对照必须用 speed=1.0——speed=1000 正是「间隔低于最小
+    # 有效粒度、完全不睡」的退化档，拿它当对照会数出 0 次，验证不了桩是否生效
+    with patch("time.sleep") as control_sleep:
+        list(play_timed(control_cassette))
+        control_sleep_calls = control_sleep.call_count
     return {
         "instant": stream.instant,
         "chunk_count": stream.deviation.chunk_count,
+        "sleep_calls": instant_sleep_calls,
+        "no_sleep": instant_sleep_calls == 0,
+        "sleep_probe_control_calls": control_sleep_calls,
         "elapsed_ms": round(elapsed_ms, 3),
+        # 保留耗时上界作为旁证（README 字段表仍引用它），但判定已由上面的
+        # sleep 调用次数直接给出
         "no_sleep_within_ceiling": elapsed_ms < _INSTANT_ELAPSED_CEILING_MS,
         "text_matches_play": "".join(chunks) == play(cassette).text,
         "max_deviation_ms": stream.deviation.max_deviation_ms,
     }
 
 
-def _verify_legacy_and_empty_timing(cassette_dir: Path) -> dict[str, Any]:
+def _verify_legacy_and_empty_timing(
+    cassette_dir: Path, control_cassette: Cassette
+) -> dict[str, Any]:
     """验证「没有时序可调度」时的两条瞬时回放口径。
 
     两者的源数据不同、代码路径相同（``timing`` 假值即走瞬时回放）：
@@ -409,6 +441,7 @@ def _verify_legacy_and_empty_timing(cassette_dir: Path) -> dict[str, Any]:
 
     Args:
         cassette_dir: cassette 临时目录。
+        control_cassette: 带 timing 的 cassette，作为 sleep 计数桩的阳性对照。
 
     Returns:
         dict[str, Any]: 两种形态各自的瞬时回放量测结果。
@@ -431,7 +464,7 @@ def _verify_legacy_and_empty_timing(cassette_dir: Path) -> dict[str, Any]:
         record(request, _streamed_response("瞬时回放"), cassette_dir, chunks=chunks)
         cassette = find_match(request, cassette_dir)
         assert cassette is not None
-        results[label] = _measure_instant_replay(cassette)
+        results[label] = _measure_instant_replay(cassette, control_cassette)
     return results
 
 
@@ -623,7 +656,9 @@ def main() -> None:
     # ── M1-D06c：时序调度回放（真实 sleep，实测偏差）──────────────
         # 三档倍率按顺序测量：原速在最前，后续档位的对比基准就是它的数字
         by_speed = [_measure_speed(streamed_cassettes, speed) for speed in TIMING_SPEEDS]
-        instant_report = _verify_legacy_and_empty_timing(cassette_dir)
+        instant_report = _verify_legacy_and_empty_timing(
+            cassette_dir, streamed_cassettes[0]
+        )
         speed_guard = _verify_speed_guard(streamed_cassettes[0])
         hash_guard = _verify_hash_guard(
             next(s.request for s in scenarios if s.chunks is not None), cassette_dir

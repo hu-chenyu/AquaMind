@@ -646,6 +646,21 @@ def play(cassette: Cassette) -> ReplayedResponse:
 def play_timed(cassette: Cassette, speed: float = 1.0) -> TimedReplay:
     """按录下的时刻调度回放：逐片产出 chunk，并给出时序偏差统计（M1-D06c）。
 
+    ⚠️ **指纹校验责任不在本函数**：``play_timed()`` 是裸入口，**不执行任何
+    request_hash 校验**。它拿到什么 cassette 就回放什么 cassette——若该 cassette
+    来自手工从磁盘加载（``Cassette.model_validate_json(path.read_text())``）或来自
+    别的请求，指纹与当前请求不一致**不会被本函数拦截**，调用方也不会收到任何异常，
+    只会拿到一段按错误节奏调度出来的、内容与请求无关的响应。那种失败最难发现：
+    文本看着合理、节奏看着正常，只是整段都不是这次请求的。
+
+    正确用法二选一：
+
+    - 已知 cassette 来自 :func:`find_match`（含 :func:`replay_request_timed` 的
+      默认路径）：指纹已被校验，直接调用；
+    - 手工加载 cassette：调用方**必须自己**先用
+      :meth:`Cassette.compute_request_hash` 重算当前请求的指纹并与
+      ``cassette.request_hash`` 比对，不一致时按「请求已变更，请重新录制」处理。
+
     三种 cassette 形态对应三条行为，且都只走 ``play_timed()`` 这一个入口：
 
     1. ``timing`` 非空：按时序调度。首片立即产出，其余各片按
@@ -655,8 +670,7 @@ def play_timed(cassette: Cassette, speed: float = 1.0) -> TimedReplay:
     3. ``timing == []``（流式但未采集到 chunk）：同 2，瞬时回放。
 
     时序回放**只改变 chunk 的到达时间，不改动任何文本内容**：各片文本按录制顺序
-    原样产出，拼接结果与录制时一致。指纹校验不在本函数内——它由 ``find_match()``
-    完成（:func:`replay_request_timed` 是把两者串起来的入口）。
+    原样产出，拼接结果与录制时一致。
 
     Args:
         cassette: 命中的 cassette。
@@ -669,8 +683,11 @@ def play_timed(cassette: Cassette, speed: float = 1.0) -> TimedReplay:
             时序偏差统计。
 
     Raises:
-        ReplayError: ``speed`` 不是正有限数（<=0、NaN、±inf）时抛出，不静默回退成
-            原速。
+        ReplayError: ``speed`` 不是正有限数（<=0、NaN、±inf）或不是数值类型
+            （如字符串）时抛出，不静默回退成原速。
+
+        **不抛**指纹不匹配异常：``play_timed()`` 不做 request_hash 校验
+        （见开头「⚠️ 指纹校验责任」），指纹由 :func:`find_match` 负责拦截。
     """
     return TimedReplay(cassette, speed)
 
@@ -751,11 +768,17 @@ def replay_request_timed(
 
 
 def _validate_speed(speed: float, request_hash: str) -> None:
-    """校验回放倍率必须是正有限数。
+    """校验回放倍率必须是数值类型且为正有限数。
 
     非法倍率一律显式报错而不静默回退成原速，理由是「回放得慢/快」与「回放的
     根本不是这段时序」在结果里长得一样：一次 0.5x 被悄悄当成 1.0x 的回放，会让
     依赖节奏的下游测试通过，却验证了错误的条件。
+
+    非数值类型（如字符串 ``"fast"``）单独拦一道：``"fast" > 0`` 抛的是 TypeError，
+    而 TypeError 不是本模块的异常体系（调用方按 :class:`ReplayError` 兜底即可覆盖
+    全部回放异常），裸 TypeError 会击穿这条约定，让「回放参数非法」在不同来源下
+    表现为两种错误类型。运行时防御在此确有价值：M1-D12 的 CLI 集成里 speed 来自
+    命令行字符串，类型标注拦不住它。
 
     Args:
         speed: 待校验的回放倍率。
@@ -765,11 +788,20 @@ def _validate_speed(speed: float, request_hash: str) -> None:
         None: ``speed`` 为正有限数时正常返回。
 
     Raises:
-        ReplayError: ``speed`` <= 0、NaN 或 ±inf 时抛出。这三类值会让
-            「间隔 ÷ speed」得到负数或 NaN，而 ``time.sleep(负数)`` 在 Windows 上
-            抛 ValueError、sleep(NaN) 静默不睡——都不该由回放层兜着。
+        ReplayError: ``speed`` 不是数值类型，或 ``speed`` <= 0、NaN、±inf 时抛出。
+            后三类值会让「间隔 ÷ speed」得到负数或 NaN，而 ``time.sleep(负数)`` 在
+            Windows 上抛 ValueError、sleep(NaN) 静默不睡——都不该由回放层兜着。
     """
-    if speed > 0 and math.isfinite(speed):
+    try:
+        is_positive_finite = speed > 0 and math.isfinite(speed)
+    except TypeError as exc:
+        # 字符串、None 等非数值输入在比较这一步就炸了；类型标注拦不住来自
+        # 命令行/配置/JSON 的运行时值，故在此转成本模块的异常类型
+        raise ReplayError(
+            message=f"speed 必须为数值类型（float/int），实际为 {type(speed).__name__}",
+            context={"speed": repr(speed), "speed_type": type(speed).__name__},
+        ) from exc
+    if is_positive_finite:
         return
     raise ReplayError(
         message=f"speed 必须为正数（0 速与非有限数都没有调度意义），实际: {speed}",
@@ -800,6 +832,18 @@ def _iter_timed_chunks(
             chunk 文本)``。瞬时回放时只产出一项 ``(0, 0.0, 0.0, 完整响应文本)``：
         不 sleep 意味着等待偏差为零，故 actual 记 0.0 而非混入「构造响应对象的
         耗时」这类与调度无关的量。
+
+    时点定义（``actual_ms`` 量的到底是哪一刻）：
+
+        ``actual_ms`` = **该片被 yield 之前一刻**的相对时刻（单调时钟，单位毫秒），
+        即**生产侧准备好产出该片**的时刻。消费方真正拿到文本的时刻可能略晚——
+        生成器把值从 ``next()`` 传回调用方还要经过一次传参与属性读取，量级在
+        微秒（典型 <0.01ms），远低于本模块 3 位小数的记录精度与平台定时器粒度。
+
+        因此它是**上界意义**上的「到达时刻」：真实消费时刻 ∈ [actual_ms, actual_ms
+        + 生成器传递开销]。选这个时点是因为它才是调度真正能控制的那一环——在
+        yield 之后打点会把「消费方处理上一片花了多久」也计进偏差，而那是使用者
+        自己的节奏，不该算到回放头上。
     """
     timing = cassette.timing
     if not timing:

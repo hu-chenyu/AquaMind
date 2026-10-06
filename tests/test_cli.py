@@ -54,7 +54,9 @@ class TestCliAppContract:
 
     def test_version_registered_as_subcommand(self) -> None:
         """version 应注册为子命令：若被提升为根命令，``aquamind version`` 会被当作多余参数。"""
-        command_names = [command.name or command.callback.__name__ for command in app.registered_commands]
+        command_names = [
+            command.name or command.callback.__name__ for command in app.registered_commands
+        ]
         assert command_names == ["version"]
 
     def test_callback_is_silent_noop(self, capsys: pytest.CaptureFixture[str]) -> None:

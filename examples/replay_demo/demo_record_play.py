@@ -257,7 +257,8 @@ def _demo_timed_replay(cassette_dir: Path) -> None:
     for text in stream:
         deviation = stream.deviation
         print(
-            f"       计划 {deviation.expected_ms[-1]:7.2f}ms / 实际 {deviation.actual_ms[-1]:7.2f}ms"
+            f"       计划 {deviation.expected_ms[-1]:7.2f}ms"
+            f" / 实际 {deviation.actual_ms[-1]:7.2f}ms"
             f" / 偏差 {deviation.deviations_ms[-1]:+6.2f}ms  {text!r}"
         )
     print(

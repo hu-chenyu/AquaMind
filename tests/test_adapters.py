@@ -223,7 +223,9 @@ class TestCallableAdapterConcurrency:
         response = asyncio.run(adapter.acomplete(_MESSAGES))
         assert response.content == "异步输出"
 
-    def test_async_fn_emits_no_never_awaited_warning(self, recwarn: pytest.WarningsRecorder) -> None:
+    def test_async_fn_emits_no_never_awaited_warning(
+        self, recwarn: pytest.WarningsRecorder
+    ) -> None:
         """async fn 路径不得产生“协程未 await”的 RuntimeWarning（无协程泄漏）。"""
 
         async def _async_sut(messages: list[dict[str, str]]) -> str:

@@ -6,7 +6,10 @@
     aquamind --help     显示帮助（exit code 0）
     aquamind version    显示当前包版本号
 
-完整的命令行程序（``run`` / ``report`` / ``cache`` 等子命令）将在 M1-D12（CLI `run` 集成，AM-Day14，2026-10-12）起逐步落地，`report` 子命令随 M4-D09（报告渲染能力）提供（见 docs/PROJECT-PLAN.md，选型决策见 docs/adr/0006-typer-cli.md）。
+完整的命令行程序（``run`` / ``report`` / ``cache`` 等子命令）将在 M1-D12
+（CLI `run` 集成，AM-Day14，2026-10-12）起逐步落地，`report` 子命令随 M4-D09
+（报告渲染能力）提供（见 docs/PROJECT-PLAN.md，选型决策见
+docs/adr/0006-typer-cli.md）。
 """
 
 from __future__ import annotations
@@ -14,7 +17,8 @@ from __future__ import annotations
 import typer
 
 # 命令行程序实例。骨架阶段即创建并注册，避免入口点悬空导致已发布包
-# 出现 ImportError；后续子命令通过 @app.command() 挂载（run 于 M1-D12 挂载，门禁/报告命令于 M4 起挂载）。
+# 出现 ImportError；后续子命令通过 @app.command() 挂载（run 于 M1-D12 挂载，
+# 门禁/报告命令于 M4 起挂载）。
 app = typer.Typer(
     name="aquamind",
     help=(

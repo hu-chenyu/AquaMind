@@ -424,7 +424,8 @@ class TestChoicesErrorClassification:
     def test_first_choice_missing_message_distinct_from_not_object(self) -> None:
         """choices[0] 是对象但缺 message：与「不是对象」保持两类区分。"""
         with pytest.raises(AdapterError) as exc_info:
-            asyncio.run(_adapter(_payload_transport({"choices": [{"index": 0}]})).acomplete(_MESSAGES))
+            adapter = _adapter(_payload_transport({"choices": [{"index": 0}]}))
+            asyncio.run(adapter.acomplete(_MESSAGES))
         assert "缺少 choices[0].message" in str(exc_info.value)
         assert exc_info.value.context["actual_type"] == "NoneType"
 

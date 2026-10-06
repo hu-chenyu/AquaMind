@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-06T02:33:48.511111+00:00",
+  "generated_at": "2026-10-06T03:24:52.985881+00:00",
   "task": "M1-D06a/b/c VCR 录制回放一致率、时序录制与调度基线",
   "scope": "文本层面（请求指纹/响应体还原精度）+ 时序录制层面（chunk 到达时刻录制精度）+ 时序调度层面（按录下时刻调度回放的实测偏差、倍率折算、旧格式瞬时回放）",
   "environment": {
@@ -36,8 +36,8 @@
   "hash_cost": {
     "iterations_per_case": 100,
     "total_measured_calls": 1100,
-    "avg_compute_ms": 0.0076,
-    "max_compute_ms": 0.0139
+    "avg_compute_ms": 0.0054,
+    "max_compute_ms": 0.0077
   },
   "timing_replay": {
     "speeds_measured": [
@@ -54,50 +54,50 @@
         "chunks": 12,
         "text_match_rate": 1.0,
         "total_scheduled_span_ms": 1612.126,
-        "total_elapsed_ms": 1613.34,
-        "elapsed_over_scheduled_ratio": 1.0008,
-        "max_deviation_ms": 0.445,
-        "mean_deviation_ms": 0.246,
+        "total_elapsed_ms": 1613.796,
+        "elapsed_over_scheduled_ratio": 1.001,
+        "max_deviation_ms": 0.796,
+        "mean_deviation_ms": 0.33,
         "deviations_ms": [
           0.0,
-          0.247,
-          0.204,
-          0.357,
+          0.219,
+          0.397,
+          0.506,
           0.0,
-          0.222,
-          0.415,
+          0.796,
+          0.433,
           0.0,
-          0.338,
-          0.406,
-          0.445,
-          0.314
+          0.099,
+          0.739,
+          0.137,
+          0.628
         ],
         "cases": [
           {
             "request_hash": "70e99cc2b638347c",
             "chunk_count": 4,
             "scheduled_span_ms": 400.0,
-            "elapsed_ms": 400.392,
-            "max_deviation_ms": 0.357,
-            "mean_deviation_ms": 0.202,
+            "elapsed_ms": 400.545,
+            "max_deviation_ms": 0.506,
+            "mean_deviation_ms": 0.281,
             "text_match": true
           },
           {
             "request_hash": "f5639a17dec417c4",
             "chunk_count": 3,
             "scheduled_span_ms": 800.0,
-            "elapsed_ms": 800.474,
-            "max_deviation_ms": 0.415,
-            "mean_deviation_ms": 0.212,
+            "elapsed_ms": 800.467,
+            "max_deviation_ms": 0.796,
+            "mean_deviation_ms": 0.41,
             "text_match": true
           },
           {
             "request_hash": "f47f1ea10fc2001a",
             "chunk_count": 5,
             "scheduled_span_ms": 412.126,
-            "elapsed_ms": 412.474,
-            "max_deviation_ms": 0.445,
-            "mean_deviation_ms": 0.301,
+            "elapsed_ms": 412.783,
+            "max_deviation_ms": 0.739,
+            "mean_deviation_ms": 0.321,
             "text_match": true
           }
         ]
@@ -108,50 +108,50 @@
         "chunks": 12,
         "text_match_rate": 1.0,
         "total_scheduled_span_ms": 806.063,
-        "total_elapsed_ms": 807.244,
-        "elapsed_over_scheduled_ratio": 1.0015,
-        "max_deviation_ms": 0.782,
-        "mean_deviation_ms": 0.329,
+        "total_elapsed_ms": 807.172,
+        "elapsed_over_scheduled_ratio": 1.0014,
+        "max_deviation_ms": 0.681,
+        "mean_deviation_ms": 0.197,
         "deviations_ms": [
           0.0,
-          0.524,
-          0.475,
-          0.411,
+          0.148,
+          0.348,
+          0.681,
           0.0,
-          0.192,
-          0.495,
+          0.191,
+          0.233,
           0.0,
-          0.37,
-          0.509,
-          0.782,
-          0.188
+          0.111,
+          0.397,
+          0.137,
+          0.116
         ],
         "cases": [
           {
             "request_hash": "70e99cc2b638347c",
             "chunk_count": 4,
             "scheduled_span_ms": 200.0,
-            "elapsed_ms": 200.44,
-            "max_deviation_ms": 0.524,
-            "mean_deviation_ms": 0.352,
+            "elapsed_ms": 200.706,
+            "max_deviation_ms": 0.681,
+            "mean_deviation_ms": 0.294,
             "text_match": true
           },
           {
             "request_hash": "f5639a17dec417c4",
             "chunk_count": 3,
             "scheduled_span_ms": 400.0,
-            "elapsed_ms": 400.526,
-            "max_deviation_ms": 0.495,
-            "mean_deviation_ms": 0.229,
+            "elapsed_ms": 400.259,
+            "max_deviation_ms": 0.233,
+            "mean_deviation_ms": 0.141,
             "text_match": true
           },
           {
             "request_hash": "f47f1ea10fc2001a",
             "chunk_count": 5,
             "scheduled_span_ms": 206.063,
-            "elapsed_ms": 206.278,
-            "max_deviation_ms": 0.782,
-            "mean_deviation_ms": 0.37,
+            "elapsed_ms": 206.207,
+            "max_deviation_ms": 0.397,
+            "mean_deviation_ms": 0.152,
             "text_match": true
           }
         ]
@@ -162,50 +162,50 @@
         "chunks": 12,
         "text_match_rate": 1.0,
         "total_scheduled_span_ms": 3224.252,
-        "total_elapsed_ms": 3226.224,
-        "elapsed_over_scheduled_ratio": 1.0006,
-        "max_deviation_ms": 0.752,
-        "mean_deviation_ms": 0.351,
+        "total_elapsed_ms": 3225.665,
+        "elapsed_over_scheduled_ratio": 1.0004,
+        "max_deviation_ms": 0.56,
+        "mean_deviation_ms": 0.291,
         "deviations_ms": [
           0.0,
-          0.632,
-          0.082,
+          0.379,
+          0.56,
+          0.444,
+          0.0,
+          0.363,
+          0.342,
+          0.0,
           0.378,
-          0.0,
-          0.492,
-          0.752,
-          0.0,
-          0.453,
-          0.132,
-          0.573,
-          0.721
+          0.263,
+          0.336,
+          0.43
         ],
         "cases": [
           {
             "request_hash": "70e99cc2b638347c",
             "chunk_count": 4,
             "scheduled_span_ms": 800.0,
-            "elapsed_ms": 800.417,
-            "max_deviation_ms": 0.632,
-            "mean_deviation_ms": 0.273,
+            "elapsed_ms": 800.576,
+            "max_deviation_ms": 0.56,
+            "mean_deviation_ms": 0.346,
             "text_match": true
           },
           {
             "request_hash": "f5639a17dec417c4",
             "chunk_count": 3,
             "scheduled_span_ms": 1600.0,
-            "elapsed_ms": 1600.784,
-            "max_deviation_ms": 0.752,
-            "mean_deviation_ms": 0.415,
+            "elapsed_ms": 1600.379,
+            "max_deviation_ms": 0.363,
+            "mean_deviation_ms": 0.235,
             "text_match": true
           },
           {
             "request_hash": "f47f1ea10fc2001a",
             "chunk_count": 5,
             "scheduled_span_ms": 824.252,
-            "elapsed_ms": 825.023,
-            "max_deviation_ms": 0.721,
-            "mean_deviation_ms": 0.376,
+            "elapsed_ms": 824.711,
+            "max_deviation_ms": 0.43,
+            "mean_deviation_ms": 0.281,
             "text_match": true
           }
         ]
@@ -215,7 +215,10 @@
       "legacy_timing_none": {
         "instant": true,
         "chunk_count": 1,
-        "elapsed_ms": 0.011,
+        "sleep_calls": 0,
+        "no_sleep": true,
+        "sleep_probe_control_calls": 3,
+        "elapsed_ms": 0.019,
         "no_sleep_within_ceiling": true,
         "text_matches_play": true,
         "max_deviation_ms": 0.0
@@ -223,7 +226,10 @@
       "empty_timing": {
         "instant": true,
         "chunk_count": 1,
-        "elapsed_ms": 0.018,
+        "sleep_calls": 0,
+        "no_sleep": true,
+        "sleep_probe_control_calls": 3,
+        "elapsed_ms": 0.011,
         "no_sleep_within_ceiling": true,
         "text_matches_play": true,
         "max_deviation_ms": 0.0
@@ -268,7 +274,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0042,
+      "hash_compute_ms": 0.0041,
       "streaming": false,
       "timing_is_none": true
     },
@@ -298,7 +304,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0059,
+      "hash_compute_ms": 0.0048,
       "streaming": false,
       "timing_is_none": true
     },
@@ -313,7 +319,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0097,
+      "hash_compute_ms": 0.0077,
       "streaming": false,
       "timing_is_none": true
     },
@@ -328,7 +334,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0059,
+      "hash_compute_ms": 0.0055,
       "streaming": false,
       "timing_is_none": true
     },
@@ -343,7 +349,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0107,
+      "hash_compute_ms": 0.004,
       "streaming": false,
       "timing_is_none": true
     },
@@ -358,7 +364,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0095,
+      "hash_compute_ms": 0.004,
       "streaming": false,
       "timing_is_none": true
     },
@@ -373,7 +379,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0079,
+      "hash_compute_ms": 0.0052,
       "streaming": false,
       "timing_is_none": true
     },
@@ -408,7 +414,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0055,
+      "hash_compute_ms": 0.0067,
       "streaming": true,
       "chunk_count": 3,
       "first_arrival_ms": 0.0,
@@ -428,7 +434,7 @@
       "status_code_match": true,
       "body_match": true,
       "text_match": true,
-      "hash_compute_ms": 0.0139,
+      "hash_compute_ms": 0.0067,
       "streaming": true,
       "chunk_count": 5,
       "first_arrival_ms": 0.0,

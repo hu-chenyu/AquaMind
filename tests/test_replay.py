@@ -208,7 +208,9 @@ class TestRequestHash:
         """方法大小写、请求体 None 与空串归一为同一指纹。"""
         lower = Cassette.compute_request_hash(RequestInfo(method="post", url="https://x/y"))
         upper = Cassette.compute_request_hash(RequestInfo(method="POST", url="https://x/y"))
-        empty = Cassette.compute_request_hash(RequestInfo(method="POST", url="https://x/y", body=""))
+        empty = Cassette.compute_request_hash(
+            RequestInfo(method="POST", url="https://x/y", body="")
+        )
         assert lower == upper == empty
 
 
@@ -768,6 +770,26 @@ class TestPlayTimed:
         assert excinfo.value.context["speed"] == -1.0
         assert excinfo.value.context["request_hash"] == cassette.request_hash
 
+    def test_non_numeric_speed_raises_replay_error(self, tmp_path: Path) -> None:
+        """非数值 speed（字符串/None）抛 ReplayError，而不是裸 TypeError。
+
+        M1-D12 起 speed 会从命令行字符串进来，类型标注拦不住运行时值。若这里
+        放行 TypeError，调用方按「except ReplayError 覆盖全部回放异常」的约定
+        就漏掉了这一类，而参数非法在不同来源下表现为两种错误类型最难排查。
+        """
+        cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
+        for bad_value in ("fast", None, [1.0]):
+            with pytest.raises(ReplayError, match="speed 必须为数值类型") as excinfo:
+                # type: ignore[arg-type] —— 刻意绕过静态标注，模拟命令行/JSON
+                # 传来的运行时脏值，正是这条防线要覆盖的场景
+                play_timed(cassette, bad_value)  # type: ignore[arg-type]
+            # context 带上类型名，排障时不必回去数引号里的值
+            assert excinfo.value.context["speed_type"] == type(bad_value).__name__
+        # 非数值路径不携带 request_hash：它校验的是「值本身不可用」，与请求无关
+        with pytest.raises(ReplayError) as excinfo:
+            play_timed(cassette, "fast")  # type: ignore[arg-type]
+        assert "request_hash" not in excinfo.value.context
+
     def test_deviation_is_empty_before_any_chunk_is_consumed(self, tmp_path: Path) -> None:
         """尚未产出任何 chunk 时偏差统计为空，汇总指标为 0.0（而非抛错）。"""
         cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
@@ -833,7 +855,9 @@ class TestPlayTimed:
         cassette = _record_timed_cassette(tmp_path, [(0.0, "先"), (-20.0, "却更早")])
         stream = play_timed(cassette)
         assert list(stream) == ["先", "却更早"]
-        assert all(call > 0 for call in sleep_calls)
+        # 一次 sleep 都没发生，即没有负数被交给 time.sleep。此前这里还跟了一句
+        # `all(call > 0 for call in sleep_calls)`，但空列表下 all() 恒为 True，
+        # 属恒真断言：既不覆盖任何行为，又让人误以为"负 sleep"被单独验证过
         assert sleep_calls == []
 
     def test_replay_request_timed_plays_matched_cassette(self, tmp_path: Path) -> None:

@@ -64,7 +64,9 @@ class TestCase(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict, description="运行时上下文（可选）")
     expected: ExpectedSpec = Field(description="期望输出规范（必填）")
     score_tags: list[ScoreTag] = Field(default_factory=list, description="应命中的评分标签（可选）")
-    weights: dict[str, float] = Field(default_factory=dict, description="各评分维度权重（可选，值须非负）")
+    weights: dict[str, float] = Field(
+        default_factory=dict, description="各评分维度权重（可选，值须非负）"
+    )
 
     @field_validator("weights")
     @classmethod
