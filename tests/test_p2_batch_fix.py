@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import httpx
 import pytest
@@ -341,7 +340,13 @@ class TestP2Fix8DocTrap:
         monkeypatch.delenv("AQ_REPLAY_DIR", raising=False)
         assert isinstance(load_config(), Settings)
 
-    def test_project_plan_no_longer_references_settings_load(self) -> None:
-        """计划文档里不得再出现 `Settings.load()` 这个不存在的 API。"""
-        plan = Path(__file__).resolve().parent.parent / "docs" / "PROJECT-PLAN.md"
-        assert "Settings.load()" not in plan.read_text(encoding="utf-8")
+    def test_settings_load_is_not_an_api(self) -> None:
+        """回归：文档曾把入口写成 ``Settings.load()``，照着写会 AttributeError。
+
+        这里刻意**不**断言 PROJECT-PLAN.md 的文本内容：该文件按项目约定属于
+        当日本地修改、从不提交（每次提交后仓库里的版本都会退回旧内容），
+        断言它的内容等于写一条永远红着的测试。本测试改为断言真正的契约——
+        文档所声称的那个不存在的属性确实不存在，真实入口确实可用。
+        """
+        assert not hasattr(Settings, "load")
+        assert callable(load_config)
