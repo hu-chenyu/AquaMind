@@ -29,13 +29,24 @@ from .exceptions import AdapterError
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-# 重试工厂必须是**无参可调用对象**而不是协程对象本身：协程对象只能被 await 一次，
-# 第二次 await 会抛 RuntimeError，重试逻辑表面上在跑、实际上永远拿不到成功结果
+# 重试工厂必须是**无参可调用对象**。两种误用的失败方式并不相同，必须分开说：
+#   1) 直接把协程对象本身传进来 —— 首次尝试就抛
+#      TypeError('coroutine' object is not callable)，一次都跑不起来；
+#   2) 工厂每次返回**同一个**协程对象 —— 该协程第二次被 await 时抛
+#      RuntimeError(cannot reuse already awaited coroutine)。这类误用更隐蔽：
+#      首次尝试可能成功，看起来「能用」，一旦真的需要重试才炸。
 CoroFactory = Callable[[], Awaitable[T]]
 
 # AdapterError.context.error_type 只保存了异常**类名**（M1-D06a 契约，见
 # adapters/openai.py 用 type(exc).__name__ 填充），拿不到实例，只能按名字归类。
-# 这两个集合覆盖 httpx 的超时族与网络族；httpx 未来新增同类异常时需要在此登记。
+# 这两个集合只服务于**名字路径**；原生 httpx 异常由 _kind_from_httpx_exception
+# 按 isinstance(TransportError) 自动覆盖，httpx 未来新增的传输层异常无需在此登记。
+# 例外是需要特殊分类的子类（如 TimeoutException 归 TIMEOUT 而非 NETWORK_ERROR），
+# 这类必须显式登记到名字路径，否则经 openai.py 包装后会丢失正确分类。
+#
+# ProtocolError 族（RemoteProtocolError / ProtocolError / ProxyError /
+# UnsupportedProtocol）在 httpx 里是 TransportError 子类而非 NetworkError 子类，
+# 但它们同样是「服务端中途断开」「代理不可用」这类瞬时故障，重试有意义。
 _TIMEOUT_ERROR_NAMES = frozenset(
     {
         "TimeoutException",
@@ -52,6 +63,11 @@ _NETWORK_ERROR_NAMES = frozenset(
         "ReadError",
         "WriteError",
         "CloseError",
+        # ProtocolError 族：瞬时传输故障，可重试（详见上方注释）
+        "RemoteProtocolError",
+        "ProtocolError",
+        "ProxyError",
+        "UnsupportedProtocol",
     }
 )
 
@@ -136,13 +152,16 @@ def _kind_from_httpx_exception(exc: BaseException) -> ErrorKind | None:
     if isinstance(exc, httpx.HTTPStatusError):
         # 未经 raise_for_status 的原生路径，状态码只能从响应对象上取
         return _kind_from_status_code(exc.response.status_code)
-    # 超时必须排在网络错误之前判定：ConnectTimeout 同时是 TimeoutException 与
-    # TransportError 的子类，顺序颠倒会把超时误判成网络错误，退避口径随之失真
+    # 超时必须排在传输错误之前判定：TimeoutException 本身也是 TransportError 子类，
+    # 顺序颠倒会把超时误判成网络错误，两者的退避口径不同（超时通常更长）
     if isinstance(exc, httpx.TimeoutException):
         return ErrorKind.TIMEOUT
-    # NetworkError 是 ConnectError / ReadError / WriteError / CloseError 的
-    # 公共基类，命中它即等价于逐个匹配上述四个子类
-    if isinstance(exc, httpx.NetworkError):
+    # 这里用 TransportError 而非更窄的 NetworkError：RemoteProtocolError /
+    # ProtocolError / ProxyError / UnsupportedProtocol 这四个「服务端中途断开、
+    # 代理不可用、协议协商失败」都是传输层瞬时故障，但它们继承的是 TransportError
+    # 而不是 NetworkError，改用基类即可自动覆盖，不必在原生路径里逐个列举——
+    # 也因此 httpx 未来新增同类异常时原生路径无需改动。
+    if isinstance(exc, httpx.TransportError):
         return ErrorKind.NETWORK_ERROR
     return None
 
@@ -233,7 +252,9 @@ async def with_retry(
 
     Args:
         coro_factory: 无参异步可调用对象，**每次调用产生新的协程**。
-            不能直接传协程对象——协程只能 await 一次，重试时会抛 RuntimeError。
+            直接传协程对象本身会在首次尝试就抛 TypeError（coroutine object is not
+            callable）；工厂复用同一个协程对象则在该协程第二次被 await 时抛
+            RuntimeError（cannot reuse already awaited coroutine）。
         max_retries: 首次尝试之外的最大重试次数。
         base_delay: 基础退避秒数，第 n 次重试的退避为 base_delay * 2 ** (n - 1)。
         jitter: 随机抖动秒数上限，实际等待 = 退避 + uniform(0, jitter)。

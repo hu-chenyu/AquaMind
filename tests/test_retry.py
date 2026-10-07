@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import call, patch
@@ -28,8 +29,23 @@ from aquamind.retry import RETRYABLE_KINDS, ErrorKind, classify_error, is_retrya
 # 与 retry._TIMEOUT_ERROR_NAMES 对应的代表名：TimeoutException 是 httpx 超时族基类，
 # ConnectTimeout 同时属于超时族与传输族，是分类顺序最容易写错的那一个
 _TIMEOUT_NAMES = ("TimeoutException", "ConnectTimeout", "ReadTimeout", "PoolTimeout")
-# 与 retry._NETWORK_ERROR_NAMES 对应的代表名
+# 与 retry._NETWORK_ERROR_NAMES 对应的代表名；末尾四个是 M1-D07-fix 新登记的
+# ProtocolError 族——它们在 httpx 里并非 NetworkError 子类，只能靠名字登记生效
+_PROTOCOL_ERROR_NAMES = (
+    "RemoteProtocolError",
+    "ProtocolError",
+    "ProxyError",
+    "UnsupportedProtocol",
+)
 _NETWORK_NAMES = ("NetworkError", "ConnectError", "ReadError", "WriteError", "CloseError")
+
+# 日志安全性测试用的两个哨兵串：模拟密钥与响应体。
+# 刻意不写成 "sk-" / "pypi-" 开头，避免被验收脚本的密钥正则
+# （(pypi|sk)-[A-Za-z0-9_-]{16,}）当成真实密钥误报。断言「日志里没有它」的
+# 有效性不依赖前缀形状，任何足够独特的哨兵字符串都成立。
+_FAKE_SECRET = "fake-secret-DO-NOT-LOG-1234567890"
+# 模拟服务端回显的响应体内容（部分网关会把请求体原样回显）
+_SENSITIVE_BODY = "sensitive-response-body-should-never-be-logged"
 
 
 def _adapter_error(message: str = "模拟调用失败", **context: Any) -> AdapterError:
@@ -154,6 +170,29 @@ class TestClassifyAdapterError:
         """无状态码时按 error_type 异常类名归入 NETWORK_ERROR。"""
         assert classify_error(_adapter_error(error_type=name)) is ErrorKind.NETWORK_ERROR
 
+    @pytest.mark.parametrize("name", _PROTOCOL_ERROR_NAMES)
+    def test_protocol_error_family_is_registered_as_network(self, name: str) -> None:
+        """M1-D07-fix：ProtocolError 族四个异常名必须登记为 NETWORK_ERROR。
+
+        它们在 httpx 里不是 NetworkError 的子类，此前落到 UNKNOWN 导致不重试；
+        服务端中途断开、代理不可用都是典型瞬时故障，漏掉会明显拉低恢复率。
+        """
+        exc = _adapter_error(error_type=name)
+        assert classify_error(exc) is ErrorKind.NETWORK_ERROR
+        # 登记为可重试只是第一步，真正影响行为的是 is_retryable 的结论
+        assert is_retryable(exc) is True
+
+    @pytest.mark.parametrize("name", _PROTOCOL_ERROR_NAMES)
+    async def test_protocol_error_family_retryable_via_error_type(
+        self, waits: list[float], name: str
+    ) -> None:
+        """M1-D07-fix：ProtocolError 族经 with_retry 会真正触发一次重试。"""
+        # 第一次抛该族异常（可重试），第二次成功：断言确实重试了而不是直接上抛
+        factory, calls = _factory(_adapter_error(error_type=name), "重试后成功")
+        result = await with_retry(factory, base_delay=0.0, jitter=0.0)
+        assert result == "重试后成功"
+        assert len(calls) == 2
+
     @pytest.mark.parametrize("name", ["InvalidURL", "JSONDecodeError", "ValueError", ""])
     def test_unknown_error_type_name_is_unknown(self, name: str) -> None:
         """error_type 名字不在已知族内（含空串）时归为 UNKNOWN。"""
@@ -217,6 +256,47 @@ class TestClassifyHttpxError:
     def test_other_exceptions_are_unknown(self, exc: Exception) -> None:
         """既非 AdapterError 也非已知 httpx 异常时归为 UNKNOWN。"""
         assert classify_error(exc) is ErrorKind.UNKNOWN
+
+    # 以下四条是 M1-D07-fix 补充：ProtocolError 族在 httpx 里继承 TransportError
+    # 而非 NetworkError，原生异常路径此前用 NetworkError 判定，命中不到它们，
+    # 直传原生异常会得到 UNKNOWN（不重试）。改用 TransportError 基类后应全部可重试。
+    def test_classify_remote_protocol_error_native(self) -> None:
+        """原生 httpx.RemoteProtocolError（服务端中途断开）应可重试。"""
+        exc = httpx.RemoteProtocolError("服务端在响应中途断开")
+        assert classify_error(exc) is ErrorKind.NETWORK_ERROR
+        assert is_retryable(exc) is True
+
+    def test_classify_protocol_error_native(self) -> None:
+        """原生 httpx.ProtocolError 应可重试。"""
+        exc = httpx.ProtocolError("协议协商失败")
+        assert classify_error(exc) is ErrorKind.NETWORK_ERROR
+        assert is_retryable(exc) is True
+
+    def test_classify_proxy_error_native(self) -> None:
+        """原生 httpx.ProxyError（代理不可用）应可重试。"""
+        exc = httpx.ProxyError("代理连接失败")
+        assert classify_error(exc) is ErrorKind.NETWORK_ERROR
+        assert is_retryable(exc) is True
+
+    def test_classify_unsupported_protocol_native(self) -> None:
+        """原生 httpx.UnsupportedProtocol 应可重试。"""
+        exc = httpx.UnsupportedProtocol("不支持的协议")
+        assert classify_error(exc) is ErrorKind.NETWORK_ERROR
+        assert is_retryable(exc) is True
+
+    def test_timeout_still_wins_over_transport_error(self) -> None:
+        """M1-D07-fix 回归：超时也是 TransportError 子类，超时判定必须排在其之前。"""
+        # ConnectTimeout / PoolTimeout 同时是 TimeoutException 与 TransportError，
+        # 若顺序颠倒会被误判成 NETWORK_ERROR，退避口径随之失真
+        for exc in (httpx.ConnectTimeout("连接超时"), httpx.PoolTimeout("池超时")):
+            assert classify_error(exc) is ErrorKind.TIMEOUT
+
+    def test_http_status_error_not_treated_as_transport_error(self) -> None:
+        """M1-D07-fix 回归：HTTPStatusError 不是 TransportError，须走状态码分支。"""
+        # 守卫判定顺序：若它被 TransportError 分支抢先命中，429 会被错判成网络错误
+        assert not issubclass(httpx.HTTPStatusError, httpx.TransportError)
+        exc = _http_status_error(429)
+        assert classify_error(exc) is ErrorKind.RATE_LIMITED
 
 
 class TestIsRetryable:
@@ -413,3 +493,97 @@ class TestWithRetrySafety:
         assert result == "第二次成功"
         # 工厂被调用两次即证明生成了两个独立协程
         assert len(calls) == 2
+
+    async def test_passing_coroutine_directly_fails_fast(
+        self, waits: list[float]
+    ) -> None:
+        """M1-D07-fix：直接把协程对象当工厂传入，首次尝试即抛 TypeError。
+
+        这是与「工厂复用同一协程对象」**不同的**第二种误用：报错发生在第一次
+        调用工厂时（协程对象不可调用），而不是第二次 await 时。docstring 已按
+        两种场景分别描述，这里把「首调即 TypeError」钉死，防止表述再次退化。
+        """
+
+        async def _work() -> str:
+            return "不会走到这里"
+
+        coro = _work()
+        try:
+            with pytest.raises(TypeError, match="not callable"):
+                await with_retry(coro, base_delay=0.0, jitter=0.0)
+        finally:
+            # 该协程按设计从未被 await，显式 close 掉，避免留下 RuntimeWarning 噪声
+            coro.close()
+        # 一次都没进重试循环，异常不是被降级成可重试分类再抛的
+        assert waits == []
+
+    async def test_reused_coroutine_raises_on_second_await(
+        self, waits: list[float]
+    ) -> None:
+        """M1-D07-fix：工厂复用同一协程对象时，第二次 await 抛 RuntimeError。"""
+        shared: Any = None
+        state = {"attempt": 0}
+
+        def _factory_reusing_one_coroutine() -> Any:
+            # 故意让每次「调用」都返回同一个协程对象：这是真实存在的误用，
+            # 首次尝试可能成功，直到真的需要重试才暴露问题
+            nonlocal shared
+            if shared is None:
+
+                async def _once() -> str:
+                    state["attempt"] += 1
+                    if state["attempt"] == 1:
+                        raise _adapter_error(status_code=500)
+                    return "ok"
+
+                shared = _once()
+            return shared
+
+        with pytest.raises(RuntimeError, match="already awaited"):
+            await with_retry(_factory_reusing_one_coroutine, base_delay=0.0, jitter=0.0)
+        # 第二次 await 才炸，证明这与「首次即 TypeError」是两种不同失败
+        assert state["attempt"] == 1
+
+
+class TestWithRetryLogging:
+    """with_retry 重试日志的内容与安全性（M1-D07-fix P3-4 回归护栏）。"""
+
+    async def test_retry_log_does_not_leak_sensitive_info(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        waits: list[float],
+    ) -> None:
+        """重试日志只含分类名/次数/等待时间，不得带出异常消息与 context 取值。
+
+        这是自动化护栏：把异常 message 或 context.response_body 拼进重试日志是
+        一行改动，没有本用例时不会有任何测试报警，而这些内容会随重试（高频路径）
+        批量进入日志系统。
+        """
+        secret = _FAKE_SECRET
+        body = _SENSITIVE_BODY
+        factory, calls = _factory(
+            _adapter_error(
+                message=f"请求失败，apikey={secret}",
+                status_code=429,
+                response_body=body,
+            ),
+            "重试后成功",
+        )
+        with caplog.at_level(logging.INFO, logger=retry_module.logger.name):
+            result = await with_retry(factory, max_retries=1, base_delay=0.0, jitter=0.0)
+
+        assert result == "重试后成功"
+        assert calls == [0, 1]
+        retry_logs = [r for r in caplog.records if r.name == retry_module.logger.name]
+        assert len(retry_logs) == 1, "触发 1 次重试应恰好产出 1 条日志"
+        text = retry_logs[0].getMessage()
+
+        # 正向：日志必须包含排障所需的分类名与重试进度
+        assert "RATE_LIMITED" in text
+        assert "1/1" in text
+        # 反向：这两条是护栏的全部意义——一旦日志里出现它们，测试必须立刻变红
+        assert secret not in text, "重试日志泄露了异常 message 中的密钥"
+        assert body not in text, "重试日志泄露了 context.response_body"
+        # 兜底：整个日志对象（含 traceback 文本）都不得携带敏感片段
+        assert secret not in caplog.text
+        assert body not in caplog.text
