@@ -47,6 +47,9 @@ CoroFactory = Callable[[], Awaitable[T]]
 # ProtocolError 族（RemoteProtocolError / ProtocolError / ProxyError /
 # UnsupportedProtocol）在 httpx 里是 TransportError 子类而非 NetworkError 子类，
 # 但它们同样是「服务端中途断开」「代理不可用」这类瞬时故障，重试有意义。
+#
+# 例外是 LocalProtocolError：它同属 ProtocolError 族却发生在**客户端侧**
+# （畸变的 HTTP 方法/报文），重试必然复现同一结果，因此两条路径都归为不可重试。
 _TIMEOUT_ERROR_NAMES = frozenset(
     {
         "TimeoutException",
@@ -68,6 +71,13 @@ _NETWORK_ERROR_NAMES = frozenset(
         "ProtocolError",
         "ProxyError",
         "UnsupportedProtocol",
+    }
+)
+# 客户端侧协议违规：重试同样的畸形请求不会有不同结果，必须与「服务端协议错误」
+# 区分开，否则会与原生路径的 TransportError 判定产生同因异果
+_CLIENT_ERROR_NAMES = frozenset(
+    {
+        "LocalProtocolError",
     }
 )
 
@@ -156,6 +166,13 @@ def _kind_from_httpx_exception(exc: BaseException) -> ErrorKind | None:
     # 顺序颠倒会把超时误判成网络错误，两者的退避口径不同（超时通常更长）
     if isinstance(exc, httpx.TimeoutException):
         return ErrorKind.TIMEOUT
+    # LocalProtocolError 是「客户端侧协议违规」（如发送了畸变的 HTTP 方法），
+    # 与同为 ProtocolError 子类的 RemoteProtocolError 性质相反：后者是服务端
+    # 中途断开，重试有意义；前者重试同样的畸形请求不会有不同结果。
+    # 必须在下面的 TransportError 分支**之前**排除——它是 TransportError 的子类，
+    # 不排除就会被当成网络故障而白白重试。
+    if isinstance(exc, httpx.LocalProtocolError):
+        return ErrorKind.CLIENT_ERROR
     # 这里用 TransportError 而非更窄的 NetworkError：RemoteProtocolError /
     # ProtocolError / ProxyError / UnsupportedProtocol 这四个「服务端中途断开、
     # 代理不可用、协议协商失败」都是传输层瞬时故障，但它们继承的是 TransportError
@@ -169,6 +186,11 @@ def _kind_from_httpx_exception(exc: BaseException) -> ErrorKind | None:
 def _kind_from_error_type_name(name: str) -> ErrorKind:
     """按异常类名字符串判定分类（仅用于 AdapterError.context.error_type 路径）。
 
+    必须与 ``_kind_from_httpx_exception`` 的结论保持一致：同一次故障经 openai.py
+    包装成 AdapterError 后走本函数，不包装则走原生路径。若同一个异常类名在两条
+    路径上得到不同分类，就会出现「直接调用可重试、实际链路不重试」这种同因异果，
+    且极难排查。
+
     Args:
         name: 异常类名，如 "TimeoutException"（由 ``type(exc).__name__`` 产生）。
 
@@ -177,6 +199,8 @@ def _kind_from_error_type_name(name: str) -> ErrorKind:
     """
     if name in _TIMEOUT_ERROR_NAMES:
         return ErrorKind.TIMEOUT
+    if name in _CLIENT_ERROR_NAMES:
+        return ErrorKind.CLIENT_ERROR
     if name in _NETWORK_ERROR_NAMES:
         return ErrorKind.NETWORK_ERROR
     return ErrorKind.UNKNOWN
@@ -192,8 +216,9 @@ def classify_error(exc: BaseException) -> ErrorKind:
        没有状态码时退回 ``context["error_type"]`` 里的异常类名；两者都没有则 UNKNOWN。
     2. **httpx.HTTPStatusError**：从响应对象取状态码。
     3. **httpx.TimeoutException**：超时族。
-    4. **httpx.NetworkError**：网络族。
-    5. 其余异常：UNKNOWN，保守按不可重试处理。
+    4. **httpx.LocalProtocolError**：客户端侧协议违规，归CLIENT_ERROR 不可重试。
+    5. **httpx.TransportError**：其余传输族（网络 / 服务端协议 / 代理）。
+    6. 其余异常：UNKNOWN，保守按不可重试处理。
 
     Args:
         exc: 待分类的异常，通常是适配器抛出的 AdapterError，也可能是 httpx 原生异常。

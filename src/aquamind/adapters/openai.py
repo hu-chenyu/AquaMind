@@ -119,6 +119,20 @@ class OpenAIAdapter(BaseAdapter):
                 message=f"OpenAI API 请求失败: {type(exc).__name__}",
                 context={"adapter": "openai", "url": url, "error_type": type(exc).__name__},
             ) from exc
+        except TypeError as exc:
+            # 请求体在 httpx 内部序列化成 JSON 时抛 TypeError（如 messages 里
+            # 混入了 set、自定义对象等不可 JSON 序列化内容）。它不在上一行的
+            # 捕获族内，会以裸 TypeError 击穿「调用方只需 except AdapterError」
+            # 的契约，且报错完全指不到「是 messages 的问题」。
+            # 单独成一个 handler 而非并入上面的元组：这类失败与「网络请求失败」
+            # 根因不同，混在一起会让排障方向一开始就错。
+            raise AdapterError(
+                message=(
+                    f"OpenAI API 请求体序列化失败: {type(exc).__name__}"
+                    "（检查 messages 是否可 JSON 序列化）"
+                ),
+                context={"adapter": "openai", "error_type": type(exc).__name__},
+            ) from exc
         latency_ms = round((time.perf_counter() - start) * 1000, 3)
 
         if not 200 <= response.status_code < 300:

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # 让字段约束（ge/le/Literal）在**构造后的赋值**路径上同样成立，
+        # 而不是只在 __init__ 时校验一次；否则 s.default_timeout = 0.001 能绕过
+        # ge=1.0，配置对象会在运行期悄悄变成非法值。
+        validate_assignment=True,
     )
 
     # ── 基础配置 ──────────────────────────────────────────────
@@ -103,6 +107,22 @@ class Settings(BaseSettings):
     def _expand_replay_dir(cls, v: Path) -> Path:
         """展开 ~ 和相对路径为绝对路径。"""
         return v.expanduser().resolve()
+
+    @field_validator("replay_dir", mode="before")
+    @classmethod
+    def _reject_blank_replay_dir(cls, v: object) -> object:
+        """空串与纯空白必须拒绝。
+
+        必须在 mode="before" 拦截：``Path("")`` 会被 pydantic 解析成 ``Path(".")``，
+        再经 ``_expand_replay_dir().resolve()`` 就变成**当前工作目录**——
+        ``AQ_REPLAY_DIR=``（.env 模板里「留空表示不设置」的惯用写法）会把
+        cassette 静默写到调用目录，且不产生任何告警。
+        同为空串时 max_tokens/default_timeout/log_level 都会抛 ValidationError，
+        唯独这个最要紧的字段静默走偏，这里补齐口径。
+        """
+        if isinstance(v, str) and not v.strip():
+            raise ValueError("replay_dir 不能为空字符串或纯空白（留空请直接删除该环境变量）")
+        return v
 
     @field_validator("log_level", mode="before")
     @classmethod

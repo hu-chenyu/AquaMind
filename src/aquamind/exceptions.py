@@ -52,8 +52,23 @@ class AquaMindError(Exception):
         return self.message
 
     def __repr__(self) -> str:
-        """返回可调试的异常表示。"""
-        return f"{self.__class__.__name__}(message={self.message!r}, context={self.context!r})"
+        """返回可调试的异常表示，与 ``__str__`` 同样**不渲染 context 的取值**。
+
+        早期版本这里直接写 ``context={self.context!r}``，把全部取值摊开输出。
+        但 repr 与 str 不同：str 是给日志/traceback 用的，repr 常被塞进调试器、
+        断言失败信息、f-string 插值与异常聚合器——这些位置一样会把响应体带出去。
+        只守住 str 等于给同一个泄露通道留了后门。
+
+        保留 context 键名即可满足排障需求（知道「有哪些上下文可用」），
+        取值一律通过 ``exc.context["key"]`` 按需显式读取。
+
+        Returns:
+            str: 形如 ``"AdapterError(message='...', context keys=[k1, k2])"`` 的表示。
+        """
+        if self.context:
+            keys = ", ".join(self.context.keys())
+            return f"{self.__class__.__name__}(message={self.message!r}, context keys: [{keys}])"
+        return f"{self.__class__.__name__}(message={self.message!r})"
 
 
 class ConfigError(AquaMindError):
