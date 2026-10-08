@@ -1,8 +1,9 @@
-# AquaMind 项目开发计划 v1.0（94 天连续执行 · 证据脊梁版）
+# AquaMind 项目路线图 v1.0（94 天 · 公开版）
 
 > 生效日期：2026-09-28；**AM-Day1 = 2026-09-29，AM-Day94 = 2026-12-31**。
-> 本文件是执行的**唯一追踪依据**，只记录工程内容：定位、选型、架构、模块、里程碑、ADR 索引、变更记录。
-> 开发方式：工程化协作，94 天连续执行，每天一个可独立交付、可检验的小模块，周末不跳过。
+> 本文件记录项目的**公开路线图**：定位、选型、架构、模块、里程碑、ADR 索引与方法学。
+> 逐日执行追踪与内部取舍记录属于私有文档，不随仓库公开。
+> **分发方式：PyPI（`pip install aquamind`）**。当前 0.0.4 为占位版；v1.0 于 AM-Day94 正式发布。
 
 ## 项目定位
 
@@ -10,7 +11,7 @@ AquaMind 是**功能质量 + 非功能质量一体化的 LLM 应用测试工具*
 
 - 功能质量：精确匹配评分 + LLM-as-Judge（结构化 rubric），覆盖单轮/多轮/工具调用；
 - 非功能旗舰：**负载下的质量退化测试**——并发阶梯负载下，延迟、质量、成本三条曲线联合分析与双门禁判定；
-- 差异化边界（2026-09 核实）：**并发阶梯实验设计 + 退化统计与测量双重校验 + 时序保真 cassette + 公开校准夹具**；
+- 差异化边界（2026-09 核实）：**并发阶梯实验设计 + 退化统计与测量双重校验 + 时序保真 cassette + 校准夹具**；
 - 明确非目标：红队攻击库不进产品代码（OWASP 检测笔记列入 2027Q1 维护期）、不做语义嵌入评分、不做多租户 SaaS、不绑定单一模型厂商。
 
 ## 工时口径
@@ -33,16 +34,16 @@ AquaMind 是**功能质量 + 非功能质量一体化的 LLM 应用测试工具*
 
 | AM-Day | 日期 | 类型 | 模块编号 | 名称/内容 | 里程碑 | 深度标记 |
 |---|---|---|---|---|---|---|
-| 1 | 2026-09-29 | 开发 | M1-D01 | 配置与异常体系 | M1 底座 | — |
-| 2 | 2026-09-30 | 开发 | M1-D02 | 用例契约模型 | M1 底座 | — |
-| 3 | 2026-10-01 | 开发 | M1-D03 | YAML/JSON 双加载器 | M1 底座 | — |
-| 4 | 2026-10-02 | 开发 | M1-D04 | 适配基类 + Callable 适配 | M1 底座 | — |
-| 5 | 2026-10-03 | 开发 | M1-D05 | OpenAI 兼容适配·非流式 | M1 底座 | — |
-| 6 | 2026-10-04 | 开发 | M1-D06a | VCR 文本录制·hash 版本 | M1 底座 | 深度·三个一 |
-| 7 | 2026-10-05 | 开发 | M1-D06b | chunk 到达时间录制（timing 字段） | M1 底座 | 深度·三个一 |
-| 8 | 2026-10-06 | 开发 | M1-D06c | 时序调度回放（加速/减速倍率） | M1 底座 | 深度·三个一 |
-| 9 | 2026-10-07 | 开发 | M1-D07 | 重试退避与错误分类 | M1 底座 | — |
-| 10 | 2026-10-08 | 开发 | M1-D08 | 预算熔断 | M1 底座 | — |
+| 1 | 2026-09-29 | 开发 | M1-D01 | 配置与异常体系 | M1 底座 ✅ | — |
+| 2 | 2026-09-30 | 开发 | M1-D02 | 用例契约模型 | M1 底座 ✅ | — |
+| 3 | 2026-10-01 | 开发 | M1-D03 | YAML/JSON 双加载器 | M1 底座 ✅ | — |
+| 4 | 2026-10-02 | 开发 | M1-D04 | 适配基类 + Callable 适配 | M1 底座 ✅ | — |
+| 5 | 2026-10-03 | 开发 | M1-D05 | OpenAI 兼容适配·非流式 | M1 底座 ✅ | — |
+| 6 | 2026-10-04 | 开发 | M1-D06a | VCR 文本录制·hash 版本 | M1 底座 ✅ | 深度·三个一 |
+| 7 | 2026-10-05 | 开发 | M1-D06b | chunk 到达时间录制（timing 字段） | M1 底座 ✅ | 深度·三个一 |
+| 8 | 2026-10-06 | 开发 | M1-D06c | 时序调度回放（加速/减速倍率） | M1 底座 ✅ | 深度·三个一 |
+| 9 | 2026-10-07 | 开发 | M1-D07 | 重试退避与错误分类 | M1 底座 ✅ | — |
+| 10 | 2026-10-08 | 开发 | M1-D08 | 预算熔断 | M1 底座 ✅ | — |
 | 11 | 2026-10-09 | 开发 | M1-D09 | SSE 帧解析器 | M1 底座 | — |
 | 12 | 2026-10-10 | 开发 | M1-D10 | 流式采集骨架 | M1 底座 | 深度·三个一 |
 | 13 | 2026-10-11 | 开发 | M1-D11 | OpenAI 流式适配 | M1 底座 | — |
@@ -124,7 +125,7 @@ AquaMind 是**功能质量 + 非功能质量一体化的 LLM 应用测试工具*
 | 89 | 2026-12-26 | 开发 | M6-D01 | 覆盖率 75→80 最后 5 个点 | M6 打磨交付 | — |
 | 90 | 2026-12-27 | 开发 | M6-D02 | 中文文档与 API 参考 | M6 打磨交付 | — |
 | 91 | 2026-12-28 | 开发 | M6-D03 | ADR 补齐（5-8 篇） | M6 打磨交付 | — |
-| 92 | 2026-12-29 | 开发 | M6-D04 | 打包与 PyPI 发布（OIDC） | M6 打磨交付 | — |
+| 92 | 2026-12-29 | 开发 | M6-D04 | 打包与 PyPI 发布（OIDC Trusted Publishing） | M6 打磨交付 | — |
 | 93 | 2026-12-30 | 开发 | M6-D05 | 外部试用启动 | M6 打磨交付 | — |
 | 94 | 2026-12-31 | 机动 | — | M6 验收 + 全局机动（可提前结束） | M6 打磨交付 | — |
 
@@ -238,40 +239,107 @@ flowchart TD
 
 > 验收（AM-Day16）：适配器切换 2 端点（含本地 mock）；429/超时分类单测通过；CLI 退出码正确；时序回放可复跑；**覆盖率门禁 50%**。
 
-### M1-D01｜配置与异常体系（AM-Day1，2026-09-29）
+### M1-D01｜配置与异常体系（AM-Day1，2026-09-29）✅
 - **文件**：`src/aquamind/config.py`、`src/aquamind/exceptions.py`
 - **类/函数**：
-  - `Settings.load()`：pydantic-settings 读 `AQ_` 前缀环境变量，含默认值
+  - `load_config()`：pydantic-settings 读 `AQ_` 前缀环境变量，含默认值（模块级函数，非 `Settings` 的方法）
   - `AquaMindError.__init__(message, context: dict)`：异常基类
   - 子类：`ConfigError` `LoaderError` `AdapterError` `ReplayError` `BudgetError`
 - **测试**（tests/test_config.py、test_exceptions.py）：缺省值；环境变量覆盖；非法值拒绝；异常携带 context
 - **检验**：缺省配置可用；坏值被拒
 
-### M1-D02｜用例契约模型（AM-Day2，2026-09-30）
+### M1-D02｜用例契约模型（AM-Day2，2026-09-30）✅
 - **文件**：`models/testcase.py`、`models/__init__.py`
 - **类/函数**：`TestCase`（input/context/expected/score_tags/weights）；`ExpectedSpec`；`ScoreTag`
 - **测试**：合法最小用例；缺必填被拒且定位字段；权重非负
 - **检验**：坏数据报错指向具体字段
 
-### M1-D03｜YAML/JSON 双加载器（AM-Day3，2026-10-01）
+### M1-D03｜YAML/JSON 双加载器（AM-Day3，2026-10-01）✅
 - **文件**：`src/aquamind/loaders.py`
 - **函数**：`load_cases(path) -> list[TestCase]`；`_parse_yaml/_parse_json`；`_report_error(file, line, msg)`
 - **测试**：双格式正常；坏 YAML 报行列号；空文件异常
 - **检验**：坏文件报错含行列号
 
-### M1-D04｜适配基类 + Callable 适配（AM-Day4，2026-10-02）
+### M1-D04｜适配基类 + Callable 适配（AM-Day4，2026-10-02）✅
 - **文件**：`adapters/base.py`、`adapters/callable.py`、`adapters/__init__.py`
 - **类/函数**：`BaseAdapter.acomplete(messages, stream=False)`（抽象）；`CallableAdapter(fn)`
 - **测试**：本地函数调用；抽象类不可实例化；返回结构归一
 - **检验**：本地函数跑通一次调用
 
-### M1-D05｜OpenAI 兼容适配·非流式（AM-Day5，2026-10-03）
+### M1-D05｜OpenAI 兼容适配·非流式（AM-Day5，2026-10-03）✅
 - **文件**：`adapters/openai_compat.py`
 - **类/函数**：`OpenAICompatAdapter(base_url, api_key, model, timeout)`；`acomplete()`；`_normalize_response()`
 - **测试**：mock server 成功路径；401/500 分类异常；超时
 - **检验**：mock 下单测通过，不触真实 API
 
-### M1-D06a/b/c｜VCR 文本 + 时序录制回放（AM-Day6~8，2026-10-04~06）— 深度·三个一
+### 覆盖率提升 92%→100%（AM-Day5 附加，2026-10-03）✅
+- **commit**：`05aa741`（第 17 次提交），仅加测试，`src/` 零改动
+- **补测**：`base.py:61` 基类兜底 NotImplementedError；`cli.py:12-47` typer 骨架入口
+  （含 `__main__` 分支）；`config.py:108` log_level 校验器非 str 透传；
+  `loaders.py:55-56,128,131` 目录读取/顶层非数组/元素非 mapping
+- **结果**：234 stmts / 0 miss / 38 branch / 0 partial = **100%**；测试 118 → 141
+- **踩坑**：① coverage 只统计当前进程，CLI 的 `app()` 必须用 `runpy.run_path` 就地以
+  `__main__` 身份执行，subprocess 永远盖不到那一行；② `typer 0.27` 把 click 内置为
+  `typer._click`，测试只能用 `typer.testing.CliRunner`，不可 `import click`；
+  ③ 读目录在 Windows 抛 `PermissionError`、POSIX 抛 `IsADirectoryError`，
+  该错误映射需定向构造才能双平台覆盖
+- **CI**：ubuntu-latest / windows-latest 双 job 全绿
+
+### 代码审查与 P1 修复（AM-Day5 附加，2026-10-03）✅
+- **审查**：`docs/bug_audit_report_aquamind_20261002.md`，17 条缺陷（P0×0 / P1×3 / P2×7 / P3×7），
+  结论「有条件通过」；每条 P1 均在 `%TEMP%` 内脚本实证复现，未改动仓库任何源码
+- **修复 commit**：`db8a023`（第 18 次提交），只动 `loaders.py` + `adapters/openai.py`
+  - **P1-1** 非 UTF-8 用例文件：`read_text(encoding="utf-8")` 抛 `UnicodeDecodeError`
+    （非 OSError，原 except 链漏网）→ 包装为 `LoaderError`，`context["encoding"]="utf-8"`
+  - **P1-2** 非法 `base_url`：`httpx.InvalidURL` 直接继承 `Exception` 而非 `HTTPError`，
+    绕过 `except httpx.HTTPError` 逃逸出 `AdapterError` → 双层修复：`__init__` 校验
+    非空 + http/https 前缀（构造期早失败）+ except 元组加宽为
+    `(HTTPError, InvalidURL, ValueError)`
+  - **P1-3** HTTP 错误消息拼接响应体：网关回显请求体时用户 prompt 全量进入日志 →
+    消息只留状态码 + 响应体长度，响应体片段移入 `context["response_body"]`
+- **结果**：测试 141 → 154（+13），240 stmts / 0 miss / 40 branch / 0 partial = **100%**
+- **变异验证**：四处逐一撤销修复并确认对应用例变红（UnicodeDecodeError 捕获 3 红、
+  构造期校验 5 红、except 收窄 1 红、消息脱敏 2 红），恢复后全绿
+- **踩坑**：① `AquaMindError.__str__` 会渲染 `context` 的**全部取值**，故响应体移入
+  context 后仍会出现在 `str(exc)` 里——P1-3 只解决了「消息字段」层面的泄露，
+  彻底消除需改 `exceptions.py` 脱敏（另立任务，本次禁改范围外）；
+  ② 该机制也正好让既有测试 `body[:500] in str(e)` 无需修改即通过，避免了
+  「修复代码必须改既有测试」的硬边界冲突；③ `len(response.text)` 是**字符数**
+  不是字节数（中文 6 字符 = 18 字节），故消息用「字符」而非「字节」
+- **CI**：ubuntu-latest / windows-latest 双 job 全绿
+- **待办**：P2×7 / P3×7 见审查报告，建议 M2 之前优先处理事件循环阻塞（V1-P2-5）
+  与 `.env` 依赖 CWD（V1-P2-4）
+
+### P2 批量修复 + 异常基类脱敏（AM-Day5 附加，2026-10-03）✅
+- **commit**：`a4c7ae7`（第 19 次提交），5 源码 + 5 测试文件
+- **修复项 0（架构级）**：`AquaMindError.__str__` 只渲染 message + context **键名**，
+  不再渲染取值 → `context["response_body"]` 等敏感内容不再进入 str(exc) / traceback /
+  logging.exception；取值一律经 `exc.context["key"]` 显式读取。P1-3 的「已知残留」至此闭环
+- **7 个 P2**：
+  - V1-P2-1 `loaders.py` 非字符串键 → 展开前校验，报「第 N 条用例包含非字符串键」而非裸 `TypeError`
+  - V1-P2-2 `openai.py` choices 四类根因（缺失 / null / 类型错 / 空列表）分别措辞 + `present`/`actual_type`
+  - V1-P2-3 `openai.py` metadata 增 `latency_includes_connection=True` 显式标识端到端口径
+    （第二步「连接复用」留待 M3 前，文档已声明不可当作服务端耗时）
+  - V1-P2-4 `config.py` docstring 声明 `.env` 按 CWD 解析（不改默认行为，避免破坏既有用法）
+  - V1-P2-5 `callable.py` 同步 fn 经 `asyncio.to_thread` 卸载，并顺带覆盖 P3-1 的 async fn 检测
+  - V1-P2-6 `openai.py` choices[0] 非对象报「不是对象」，与「缺少 message」分成两类
+  - V1-P2-7 `loaders.py` 读文件改 `utf-8-sig`，YAML/JSON 的 BOM 行为一致
+- **结果**：测试 154 → 180（+26），259 stmts / 0 miss / 54 branch / 0 partial = **100%**
+- **同步修正的既有测试（3 处，均为契约变更倒逼，非放宽）**：
+  ① `test_str_with_context`：`key=value` → 断言键名（脱敏语义反转）
+  ② `test_returns_normalized_response`：metadata 键集补 `latency_includes_connection`
+  ③ `test_http_error_status_codes_rejected`：`body in str(exc)` → `body in exc.context["response_body"]`
+- **变异验证**：`__str__` 重新渲染取值 → 4 红；同步 fn 改回直接调用 → 并发用例实测
+  0.401s（串行）> 0.3s 阈值变红，确认计时类断言非空断言
+- **踩坑**：① `mypy strict` 含 `--warn-unreachable`，若把解析结果标注为
+  `list[dict[str, Any]]`，则 `isinstance(key, str)` 的 False 分支会被判为不可达而报错，
+  必须把 `_ensure_case_list` 返回类型放宽为 `list[dict[Any, Any]]`（YAML 键本就可是任意可哈希值）；
+  ② 本次未按建议拆 2 个 commit：修复项 0 与 P2 在 `test_openai_adapter.py` 中纠缠，
+  拆分后任一中间树都无法保证「单独 checkout 自洽全绿」
+- **CI**：ubuntu-latest / windows-latest 双 job 全绿
+- **剩余**：P3×7 未处理（含 `context["url"]` 凭据脱敏、`usage` 缺省 None 等）
+
+### M1-D06a/b/c｜VCR 文本 + 时序录制回放（AM-Day6~8，2026-10-04~06）— 深度·三个一 ✅（D6a/D6b/D6c 全部完成）
 - **文件**：`src/aquamind/replay.py`
 - **三日交付**：
   - D6a：`Cassette`（请求指纹/响应体/**hash 版本字段**）；`record/find_match/play()`
@@ -282,13 +350,176 @@ flowchart TD
 - **决策 ADR**：时序保真回放的设计决策与边界
 - **检验**：离线回放文本与时序均可复现；hash 不匹配报错
 
-### M1-D07｜重试退避与错误分类（AM-Day9，2026-10-07）
+**D6a 交付明细（2026-10-04）**
+- **commit**：`ae15fc4`（第 20 次提交），1 源码 + 1 测试 + 2 产物目录
+- **实现**：`Cassette`（请求指纹/响应体/`request_hash` 版本字段）；`record/find_match/play`
+  + `replay_request`（无匹配显式报错入口）；`ReplayedResponse`（读取面与
+  `httpx.Response` 对齐：status_code/headers/text/content/json）
+- **结果**：测试 180 → 219（+39），393 stmts / 0 miss / 76 branch / 0 partial = **100%**
+  （`replay.py` 单模块 100%）；`mypy src` 与 `ruff check src tests` 零错误
+- **三个一**：`scripts/replay_baseline.json`（8 组场景，status_code/body/text 一致率
+  均 100%，平均指纹计算耗时 0.005 ms）；`examples/replay_demo/`（演示 + 基线生成脚本）
+- **关键设计**：① 指纹 = 方法+URL+关键请求头+请求体规范化后取 SHA-256 前 16 位，
+  头名小写归一（`Content-Type` 与 `content-type` 同指纹）、噪声头不入指纹
+  （User-Agent 升级不致 cassette 失效）；② `authorization`/`x-api-key` 参与指纹但
+  只以 `sha256:<前16位>` 摘要落盘——cassette 会入库，明文密钥不可接受，且换密钥
+  仍能被指纹察觉触发重录；③ 后续 `timing` 字段一律带默认值，旧 cassette 天然
+  可加载（D6c「旧格式瞬时回放」即基于此）
+- **待续**：D6b（chunk 到达时间录制 + `timing` 字段）、D6c（时序调度回放与
+  加速/减速倍率、旧格式兼容）、ADR 统一在 D6c 后补写
+
+**D6a 独立验收热修（2026-10-04）**
+- **commit**：`09cd733`（第 21 次提交），5 文件（1 源码 + 1 测试 + 2 脚本 + 1 文档）
+- **P2-1 demo 非幂等**：演示脚本原先硬编码写仓库内 `examples/replay_demo/cassettes/`，
+  每跑一次就用当前时刻改写被跟踪文件，工作区留下 ` M`、已交付示例与实际内容漂移。
+  改为默认写系统临时目录（`%TEMP%\aquamind-demo-*`），并加 `--cassette-dir` 显式指定；
+  仓库内示例 cassette 作为静态产物保留
+- **P2-2 产物被重跑覆盖**：随 P2-1 一并解决；README 增「交付纪律」条款——
+  交付后勿重跑 `generate_baseline.py` 覆盖 `scripts/replay_baseline.json`，
+  需重生成请在独立分支/临时目录做后显式提交
+- **P3-1 临时目录泄漏**：`generate_baseline.py` 的 `mkdtemp` 改为
+  `TemporaryDirectory` 上下文管理器，退出即清理（此前每跑一次在 `%TEMP%` 留一个
+  含 8 个 cassette 的目录持续累积）；顺手把报告里 `hash_length: 16` 硬编码改为
+  `len(实测指纹)`，消除与 `_HASH_LENGTH` 的双写漂移
+- **P3-6 缺格式版本字段**：加 `format_version`（默认 1）+ `CURRENT_FORMAT_VERSION`，
+  缺字段按 v1 解析（向后兼容），高于上限报「版本过新，请升级 aquamind」
+- **关键设计（版本闸门位置）**：闸口必须放在 pydantic 契约校验**之前**。
+  `Cassette` 是 `extra="forbid"`，D6b 加 `timing` 后旧代码读到新文件会先因未知字段
+  报「字段不符合契约」——把「代码太旧」说成「文件损坏」，排障方向第一步就错。
+  故 `_check_format_version` 在 `model_validate` 之前拦。已用
+  `test_version_gate_beats_contract_error` 固定该行为，并实测三种输入的判别：
+  `v2+timing`→「版本过新」；`仅 timing 无版本号`→「字段不符合契约」；
+  `版本号非整数`→「字段不符合契约」（畸形值交契约层）
+- **结果**：测试 219 → 225（+6），404 stmts / 0 miss / 82 branch / 0 partial = **100%**
+  （`replay.py` 100%）；`mypy src`、`ruff check src tests examples` 零错误
+- **手动验证**：跑完 demo 后 `git status` 无 `M examples/replay_demo/cassettes/`；
+  跑完 baseline 后 `%TEMP%` 下 `aquamind-baseline-*` 计数 0（脚本已用
+  `git checkout` 恢复受保护产物 `scripts/replay_baseline.json`）
+
+**D6b 交付明细（2026-10-05）**
+- **commit**：`e5298a4`（第 22 次提交），6 文件（1 源码 + 1 测试 + 3 示例 + 1 产物 JSON）
+- **实现**：`ChunkTiming`（index/arrival_ms/text，`extra="forbid"`）；`Cassette.timing`
+  （`list[ChunkTiming] | None = None`，带默认值保向后兼容）；`CURRENT_FORMAT_VERSION`
+  1 → 2；`record(..., chunks: list[tuple[float, str]] | None = None)` 增时序录制。
+  `find_match()/play()` 逻辑不变——**只录不播**
+- **结果**：测试 225 → 240（**15 条新增用例**；另 2 条存量用例的断言随版本号调整），
+  414 stmts / 0 miss / 82 branch / 0 partial = **100%**（`replay.py` 155 stmts / 28 branch
+  全覆盖）；`mypy src`、`ruff check src tests examples` 零错误
+- **三个一**：`scripts/replay_baseline.json`（11 组场景 = 8 非流式 + 3 流式，
+  status_code/body/text 一致率均 100%，**时序 3 组共 12 个 chunk**，平均每片 3.92 字，
+  首片归零/单调递增/3 位小数/JSON 往返/增量拼接对齐五项精度指标均 100%，
+  实测最大小数位 3）；`examples/replay_demo/`（演示脚本增时序分支 `[11]`~`[19]`）
+- **关键设计**：① 时刻存**相对偏移**——录制的绝对时刻受发起机器时钟与运行时刻影响，
+  既不可复现也无回放价值，`record()` 以第一个 chunk 为原点平移，首片恒 0.0，
+  首包延迟不进时序；② `arrival_ms` 保留 3 位（微秒精度），把 `0.1+0.2` 这类浮点
+  尾差挡在落盘前，保证同一段流在不同机器上录出相同数字；③ **保序即事实**——
+  `index` 即位置，不按 `arrival_ms` 重排，录制顺序才是服务端真实下发顺序，
+  故允许 `arrival_ms` 为负（表达「比首片还早到达」），排序会掩盖真实乱序
+- **踩坑**：① `format_version` 升 2 后，D6a 存量测试 `test_version_gate_beats_contract_error`
+  原本拿 `v2 + timing` 构造「未来 cassette」，此时 v2 已受支持，闸口不再触发、
+  该用例会退化成「字段不符合契约」——已改为 `CURRENT_FORMAT_VERSION + 1` + 未来字段名，
+  并补 `test_unknown_field_on_supported_version_is_contract_error` 锁死两类根因的边界；
+  ② `chunks=[]` 与 `chunks=None` 必须区分：前者是「流式但未采集到 chunk」
+  （`timing == []`），后者是「非流式」（`timing is None`），否则 D6c 无法区分
+  「旧格式按瞬时回放」与「流式无内容」
+- **待续**：D6c（时序调度回放与加速/减速倍率、旧格式兼容）、ADR 统一在 D6c 后补写
+
+**D6c 交付明细（2026-10-06）**
+- **commit**：`9770c8f`（第 24 次提交），7 文件（1 源码 + 1 测试 + 3 示例 + 1 产物 JSON + 1 ADR）
+- **实现**：`play_timed(cassette, speed=1.0) -> TimedReplay`（产出 chunk 文本的迭代器，
+  附 `deviation` 时序偏差统计）；`replay_request_timed()`（查找 + 指纹校验 + 调度，
+  与 `replay_request` 同构）；`TimingDeviation`（逐片计划/实际时刻 + 偏差汇总）。
+  `play()` / `record()` / `find_match()` 逻辑**一字未动**，不新增 cassette 字段，
+  `format_version` 保持 2
+- **结果**：测试 241 → 261（**20 条新增用例**，时序相关用例连跑 3 次稳定），
+  505 stmts / 0 miss / 98 branch / 0 partial = **100%**（`replay.py` 246 stmts /
+  44 branch 全覆盖）；`mypy src`、`ruff check src tests examples scripts` 零错误
+- **三个一**：`scripts/replay_baseline.json`（新增 `timing_replay` 段：11 组场景 =
+  8 非流式 + 3 流式共 12 个 chunk，三档倍率文本一致率均 **100%**，原速最大偏差
+  **0.445ms** / 平均 **0.246ms**，2x 加速 **0.782/0.329ms**，0.5x 减速
+  **0.752/0.351ms**，实测/计划耗时比 1.0006~1.0015 即无累积漂移；瞬时回放两种形态
+  各产出 1 项、耗时 0.011/0.018ms 且不 sleep；非法倍率 4 种与篡改 hash 均被拦截）；
+  `examples/replay_demo/`（演示脚本增调度段 `[20]`~`[28]`，加速 200.3ms / 原速
+  400.6ms / 减速 800.6ms）；`docs/adr/0008-timing-replay.md`（三层 ADR）
+- **关键设计**：① **生成器而非回调**——流式是一条「等到了才给下一片」的消费链，
+  回调要把开始/结束/异常/缓冲全推给调用方，生成器让产出节奏由消费速度牵引；
+  ② **两个入口并存而非给 `play()` 挂 `timed` 开关**——开关会让「要不要时序」变成
+  可漏传的默认值，同一次回放在不同调用点悄悄给出不同 chunk 边界，而那不会在任何
+  日志里留痕，它不是失败，是**没测**；③ **绝对时刻对齐而非逐片 sleep 间隔**——
+  后者让第 N 片的误差等于前 N-1 片之和，一次 15ms 抖动被放大到流末（使用方感知
+  最敏锐处），前者把误差约束在单次定时器精度内；④ **偏差基准先除 speed**——用
+  未折算的 `arrival_ms` 当基准，加速回放会凭空显示整段 `1/speed` 的「偏差」，把
+  正确调度报成错误；⑤ **非法倍率显式报错不静默回退**——「回放得慢」与「回放的
+  根本不是这段时序」在结果里长得一样
+- **踩坑**：① 「speed 极大时退化为不 sleep」最初只判了 `remaining > 0`，结果
+  `speed=1000` 下每片仍以 0.025ms 的间隔去调 sleep——**注定无效的系统调用**。
+  改为低于 `_MIN_SLEEP_SECONDS`（1ms）直接跳过，但仍**逐片产出**：退化口径必须是
+  逐片而非一次性给全，否则打字机/进度条依赖的 chunk 边界会整体变形；
+  ② mock 掉 `time.sleep` 后时钟不再推进，`sleep` 参数是**累计的计划时刻**而非
+  相邻间隔。这不是 bug 而是绝对对齐的形状（也是它区别于逐片间隔的证据），用例按
+  真实语义断言而非按直觉断言
+- **ADR**：`docs/adr/0008-timing-replay.md`（决策/备选/边界三层；已按 D6b「ADR 统一
+  在 D6c 后补写」的约定把时序保真回放的取舍补齐）
+- **待续**：CLI 侧的 `--speed` 与偏差阈值暴露随 M1-D12 集成；时序回放**不得**用于
+  论证真实 TTFT 是否达标（见 ADR 0008 边界五）
+
+**D6c-fix 热修明细（2026-10-06）· 独立验收 P3 全修（6 项，已修 6 项，待 1 项授权）**
+- **背景**：DeepSeek 独立验收结论「通过（P0=0/P1=0/P2=0/P3=6）」，6 个 P3 全部为
+  文档/配置/测试表述层面，无功能缺陷
+- **P3-1 恒真冗余断言**：删除 `assert all(call > 0 for call in sleep_calls)`。空列表下
+  `all()` 恒为 True，它既不覆盖任何行为，又让人误以为「负 sleep」被单独验证过；紧随
+  其后的 `assert sleep_calls == []` 已是更强断言。已就地留注释说明为何不再加回
+- **P3-2 E501 启用 + 超长行修复**：`pyproject.toml` 新增 `[tool.ruff.lint]`，
+  用 **`extend-select = ["E501"]` 而非 `select`**——`select` 会顶掉 ruff 默认规则集，
+  E501 到位的同时 F401 等既有检查会一起失效（已实测：`--select E501` 只报 E501，
+  `--extend-select E501` 两者都报）。那是把「加严」做成「放宽」；本项的目的是让
+  「行长 100」从声明变成可执行门禁，不能顺带削弱别的检查
+- **P3-2 关键发现：ruff 的 E501 按**显示宽度**判定（全角字符记 2 列），与字符数不同**。
+  任务书列出的 6 处是按字符数统计的，启用 E501 后实测**另有 2 处**按宽度超限：
+  `src/aquamind/models/testcase.py:67`（91 字符 / 宽度 107）与
+  `examples/replay_demo/demo_record_play.py:260`（97 字符 / 宽度 101）。两处原属
+  当日禁改文件，**经负责人授权后扩入范围**一并修复（纯格式拆分，不改语义）
+- **P3-3 指纹校验责任**：`play_timed()` docstring 开头加 ⚠️ 段：本函数**不执行任何
+  request_hash 校验**，手工从磁盘加载 cassette 直接调用时指纹不一致**不会被拦截**，
+  给出两条正确用法（经 `find_match` / 自行重算比对）；`Raises` 段补「不抛指纹不匹配
+  异常，校验由 find_match 负责」
+- **P3-4 非数值 speed 防御**：`_validate_speed()` 用 try/except 捕获 `TypeError` 转成
+  `ReplayError`（消息含「必须为数值类型」，context 带 `speed_type`），NaN/inf/<=0 的
+  既有行为不变。理由：M1-D12 起 speed 来自命令行字符串，类型标注拦不住运行时值，
+  而 TypeError 不在模块异常体系内，调用方 `except ReplayError` 会漏掉这一类
+- **P3-5 瞬时回放判定改为直接计数**：`generate_baseline.py` 用
+  `unittest.mock.patch("time.sleep")` 桩替换 sleep，判据由「耗时 < 50ms 的间接推断」
+  改为「sleep 被调用 0 次」；桩的作用域严格限定在 with 块内，不影响三档倍率的真实
+  偏差测量；**并加了阳性对照**（同一根桩插到带 timing 的 cassette 上须数到调用），
+  否则「0 次」可能只是桩没接上
+- **P3-6 actual_ms 时点定义**：docstring 明确 `actual_ms` = **该片被 yield 之前一刻**
+  的相对时刻（生产侧准备产出的时刻），消费方收到文本的时刻可能略晚（生成器传递开销
+  量级微秒，远低于 3 位小数记录精度），故它是「到达时刻」的上界意义
+- **测试**：241→262 中 D6c 的 261 → **262**（新增 1 条 `test_non_numeric_speed_raises_replay_error`，
+  覆盖 str/None/list 三种非数值 + context 字段 + 非数值路径不带 request_hash）；
+  时序相关用例连跑 3 次稳定
+- **质量门禁**：`mypy src` 零错误；覆盖率全仓 **509 stmts / 0 miss / 98 branch /
+  0 partial = 100%**（`replay.py` 250 stmts / 44 branch 全覆盖，新增分支已被测试覆盖）；
+  敏感词与明文密钥扫描均零命中
+- **🔴 阻塞与解除（记录留痕）**：首轮修复后验收第 5 条无法在不越界的前提下达成——
+  剩余 2 处 E501 都在当日禁改文件里，其中 `models/testcase.py:67` 会被 **CI 直接判红**
+  （ci.yml 的 ruff 步骤跑 `ruff check src tests`）。当时按「扩大范围先停止并报告」的
+  SOP **未提交**，把 2 处纯格式拆分的修法连同行宽测算一并上报；负责人授权扩范围后
+  补修完毕，`ruff check src tests examples scripts` 转为 All checks passed，方才提交。
+  教训：任务书给的「超长行清单」按字符数统计，与 ruff 按显示宽度的判定口径不一致，
+  凡是「启用 lint 新规则」类任务，清单都应按该规则的**真实判定口径**复核一遍
+- **结果**：测试 262 passed（新增 1 条），`mypy src` 零错误，`ruff check src tests
+  examples scripts` **All checks passed（E501 已启用且全仓零超长行）**，覆盖率全仓
+  **509 stmts / 0 miss / 98 branch / 0 partial = 100%**，敏感词与明文密钥扫描零命中
+
+
+### M1-D07｜重试退避与错误分类（AM-Day9，2026-10-07）✅
 - **文件**：`src/aquamind/retry.py`
 - **类/函数**：`ErrorKind`；`classify_error(exc)`；`with_retry(coro_factory, max_retries, base, jitter)`
 - **测试**：429/5xx/超时退避；AUTH 不重试
 - **检验**：三类故障按策略重试
 
-### M1-D08｜预算熔断（AM-Day10，2026-10-08）
+### M1-D08｜预算熔断（AM-Day10，2026-10-08）✅
 - **文件**：`src/aquamind/budget.py`
 - **类/函数**：`Budget(max_tokens, max_cost)`；`consume()`；`BudgetExceeded`
 - **测试**：未超正常；达阈值熔断；并发消费不超额
@@ -783,7 +1014,7 @@ examples/          各深度模块可运行示例
 3. 季度 release note；
 4. 公开 roadmap 更新；
 5. 数据集季度更新；
-6. **校准夹具同步发布到 Hugging Face Datasets**（2027Q1 起随季度报告更新；成本约半天，提升引用价值与可发现性）。
+6. **校准夹具（calibration fixtures）随季度报告更新发布**（2027Q1 起随季度报告更新；成本约半天，提升引用价值与可发现性）。
 
 # 跟踪规则
 
@@ -818,7 +1049,7 @@ examples/          各深度模块可运行示例
 | 专业压测工具 | TTFT/ITL/goodput/错误率 | 输出质量随负载的统计判定 |
 | 商业内容 | Future AGI 等已在讲 quality under load（概念在普及） | 开源产品化 + 公开数据集 |
 
-**结论：差异化锁定为「并发阶梯实验设计 + 退化统计与测量双重校验 + 时序 cassette + 公开校准夹具」；核心方向不受竞品影响。**
+**结论：差异化锁定为「并发阶梯实验设计 + 退化统计与测量双重校验 + 时序 cassette + 校准夹具」；核心方向不受竞品影响。**
 
 ## C. 技术能力覆盖核对
 
