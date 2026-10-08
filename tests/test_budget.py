@@ -93,10 +93,16 @@ class TestUnlimitedSemantics:
         assert budget.current_tokens == 999999
         assert budget.current_cost == pytest.approx(999999.0)
 
-    async def test_negative_inf_treated_as_none(self) -> None:
-        """-inf 同样表示「无上限」；让它落进比较会在加任何值时立刻误判超限。"""
-        assert Budget(max_tokens=-float("inf")).max_tokens is None
-        assert Budget(max_cost=-float("inf")).max_cost is None
+    async def test_negative_inf_rejected(self) -> None:
+        """负无穷是负数，必须被拒绝（fail-safe），不得当成「无上限」。
+
+        把 -inf 静默解释成无上限，会让一个写错的负配置变成**最宽松**的配置——
+        与「上限为负一律拒绝」的契约直接矛盾，且不会有任何告警。
+        """
+        with pytest.raises(ValueError, match="max_tokens"):
+            Budget(max_tokens=-math.inf)
+        with pytest.raises(ValueError, match="max_cost"):
+            Budget(max_cost=-math.inf)
 
 
 class TestConsume:
@@ -228,6 +234,22 @@ class TestRemainingViews:
 class TestConcurrency:
     """并发安全：check-then-commit 必须是原子的。"""
 
+    def test_budget_uses_asyncio_lock(self) -> None:
+        """结构性锚点：Budget 持有一个 asyncio.Lock。
+
+        锁的**必要性**由 ``test_lock_protects_critical_section`` 的无锁对照组
+        论证；本条只锚定锁的存在与类型，防止未来重构时被误删——而误删在当前
+        实现下未必会立刻暴露（临界区恰好没有 await 点时天然原子），等真出问题
+        往往已是线上高并发场景。
+        """
+        budget = Budget(max_tokens=100)
+        assert isinstance(budget._lock, asyncio.Lock)
+
+    def test_each_budget_owns_its_own_lock(self) -> None:
+        """锁必须是实例级而非类级共享，否则所有 Budget 会互相串行。"""
+        first, second = Budget(100), Budget(100)
+        assert first._lock is not second._lock
+
     async def test_concurrent_consume_no_overage(self) -> None:
         """并发消费不超额：最终用量恰好等于上限，绝不越过。"""
         budget = Budget(max_tokens=100, max_cost=1.0)
@@ -318,6 +340,95 @@ class TestConcurrency:
         assert guarded.current_tokens == 100
 
 
+class TestSnapshot:
+    """snapshot() 一体化账本快照。"""
+
+    def test_snapshot_returns_complete_dict(self) -> None:
+        """快照必须含全部 7 个字段，且与各只读属性逐一一致。"""
+        budget = Budget(max_tokens=100, max_cost=1.0)
+        snapshot = budget.snapshot()
+        for key in (
+            "max_tokens",
+            "max_cost",
+            "current_tokens",
+            "current_cost",
+            "remaining_tokens",
+            "remaining_cost",
+            "is_exhausted",
+        ):
+            assert key in snapshot, f"snapshot 缺少 {key}"
+        # 快照的价值在于「一次读全」，故必须与逐个读属性完全等价
+        assert snapshot["max_tokens"] == budget.max_tokens
+        assert snapshot["max_cost"] == budget.max_cost
+        assert snapshot["current_tokens"] == budget.current_tokens
+        assert snapshot["current_cost"] == budget.current_cost
+        assert snapshot["remaining_tokens"] == budget.remaining_tokens
+        assert snapshot["remaining_cost"] == budget.remaining_cost
+        assert snapshot["is_exhausted"] == budget.is_exhausted
+
+    async def test_snapshot_after_consume(self) -> None:
+        """consume 后快照反映最新账本。"""
+        budget = Budget(max_tokens=100, max_cost=1.0)
+        await budget.consume(50, 0.5)
+        snapshot = budget.snapshot()
+        assert snapshot["current_tokens"] == 50
+        assert snapshot["current_cost"] == pytest.approx(0.5)
+        assert snapshot["remaining_tokens"] == 50
+        assert snapshot["remaining_cost"] == pytest.approx(0.5)
+
+    async def test_snapshot_reflects_exhaustion(self) -> None:
+        """用满后快照的 remaining 归零、is_exhausted 为真。"""
+        budget = Budget(max_tokens=100, max_cost=1.0)
+        await budget.consume(100, 1.0)
+        snapshot = budget.snapshot()
+        assert snapshot["is_exhausted"] is True
+        assert snapshot["remaining_tokens"] == 0
+        assert snapshot["remaining_cost"] == pytest.approx(0.0)
+
+    def test_snapshot_unlimited_uses_none_not_inf(self) -> None:
+        """无上限维度在快照里是 None 而非 inf（inf 会污染报告里的 JSON 序列化）。"""
+        snapshot = Budget().snapshot()
+        assert snapshot["max_tokens"] is None
+        assert snapshot["max_cost"] is None
+        assert snapshot["remaining_tokens"] is None
+        assert snapshot["remaining_cost"] is None
+        assert snapshot["is_exhausted"] is False
+
+    def test_snapshot_is_a_copy_not_live_state(self) -> None:
+        """快照是副本：改它不会污染 Budget 本体（与消耗后的账本无关）。"""
+        budget = Budget(max_tokens=100, max_cost=1.0)
+        snapshot = budget.snapshot()
+        snapshot["current_tokens"] = 999
+        assert budget.current_tokens == 0
+
+
+class TestImmutability:
+    """上限在运行期不可变。"""
+
+    def test_budget_limits_are_immutable(self) -> None:
+        """上限一旦设定不可改写，防止运行期意外改变预算口径。
+
+        若 max_tokens 可被赋成 5，已按 100 记完账的运行会突然变成超限，
+        报告里「本次按多少预算执行」也就无法自证了。
+        """
+        budget = Budget(max_tokens=100, max_cost=1.0)
+        with pytest.raises(AttributeError):
+            budget.max_tokens = 5  # type: ignore[misc]
+        with pytest.raises(AttributeError):
+            budget.max_cost = 2.0  # type: ignore[misc]
+        # 失败尝试不得留下痕迹
+        assert budget.max_tokens == 100
+        assert budget.max_cost == pytest.approx(1.0)
+
+    def test_current_readouts_also_read_only(self) -> None:
+        """只读视图同样不可赋值——用量只能由 consume 推进，不能被外部改写。"""
+        budget = Budget(max_tokens=100, max_cost=1.0)
+        with pytest.raises(AttributeError):
+            budget.current_tokens = 50  # type: ignore[misc]
+        with pytest.raises(AttributeError):
+            budget.remaining_tokens = 50  # type: ignore[misc]
+
+
 class TestInputValidation:
     """构造参数与 consume 入参的校验。"""
 
@@ -347,6 +458,23 @@ class TestInputValidation:
         """NaN 上限必须被拒：它与任何数比较都是 False，会让超限判断彻底失效。"""
         with pytest.raises(ValueError, match="max_cost"):
             Budget(max_cost=math.nan)
+
+    def test_nan_max_tokens_rejected(self) -> None:
+        """NaN token 上限必须被拒，且消息要点名 NaN。
+
+        NaN 会落进浮点分支；若不单独拦，它会一路走到「含小数」的分支被误报，
+        消息与根因对不上，排障时会被引向「是不是写错了小数点」的错误方向。
+        """
+        with pytest.raises(ValueError) as excinfo:
+            Budget(max_tokens=math.nan)
+        assert "NaN" in str(excinfo.value)
+        assert "小数" not in str(excinfo.value)
+
+    def test_fractional_max_tokens_still_reports_fraction(self) -> None:
+        """带小数的上限仍报「含小数」——NaN 分支不得抢走这条措辞。"""
+        with pytest.raises(ValueError) as excinfo:
+            Budget(max_tokens=1.5)
+        assert "小数" in str(excinfo.value)
 
     @pytest.mark.parametrize("bad", [-0.1, -1.0])
     def test_negative_max_cost_rejected(self, bad: float) -> None:

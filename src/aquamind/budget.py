@@ -48,14 +48,22 @@ def _normalize_token_limit(value: float | None) -> int | None:
         int | None: 归一后的上限；无上限时返回 None。
 
     Raises:
-        ValueError: 类型不合法、含小数、或为负数时抛出。
+        ValueError: 类型不合法、为 NaN、含小数、或为负数（含 -inf）时抛出。
     """
     if value is None:
         return None
     if isinstance(value, float):
-        # inf 归一为 None：无上限是本模块的一等语义，不该以一个参与求和的数存在
-        if math.isinf(value):
+        # NaN 先拦：它与任何数比较都是 False，会让「是否超限」永远得不到可靠答案；
+        # 混进下面的 is_integer 分支会被误报成「含小数」，消息与根因对不上
+        if math.isnan(value):
+            raise ValueError(f"max_tokens 必须是非负整数，不能是 NaN，当前值: {value!r}")
+        # 只有 +inf 表示显式无上限。-inf 是负数，必须拒绝（fail-safe）：
+        # 把它当成「无上限」会让一个写错的负配置变成**最宽松**的配置，
+        # 与「负数一律拒绝」的 docstring 承诺直接矛盾
+        if value == math.inf:
             return None
+        if value == -math.inf:
+            raise ValueError(f"max_tokens 不能为负，当前值: {value!r}")
         # 整数值浮点（如 100.0）来源常见（比值计算、JSON 解析），接受但取整；
         # 带小数的则是笔误，没有「最多 100.5 个 token」这种东西
         if value.is_integer():
@@ -78,7 +86,7 @@ def _normalize_cost_limit(value: float | None) -> float | None:
         float | None: 归一后的上限；无上限时返回 None。
 
     Raises:
-        ValueError: 类型不合法、NaN 或为负数时抛出。
+        ValueError: 类型不合法、NaN 或为负数（含 -inf）时抛出。
     """
     if value is None:
         return None
@@ -87,9 +95,10 @@ def _normalize_cost_limit(value: float | None) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or math.isnan(value):
         raise ValueError(f"max_cost 必须是非负数或 None（不能是 NaN），当前值: {value!r}")
     amount = float(value)
-    # inf 归一为 None，语义与 token 维度一致。必须排在「是否小于 0」之前：
-    # -inf 自身就是 inf，同样表示显式无上限，而不是一个负数上限
-    if math.isinf(amount):
+    # 只有 +inf 表示显式无上限（与 token 维度同一口径）。-inf 落到下方
+    # 「小于 0」判断被拒绝（fail-safe）：把负无穷解释成「无上限」会让一个
+    # 写错的负配置变成最宽松的配置
+    if amount == math.inf:
         return None
     if amount < 0:
         raise ValueError(f"max_cost 不能为负，当前值: {value!r}")
@@ -193,17 +202,57 @@ class Budget:
 
     @property
     def remaining_cost(self) -> float | None:
-        """剩余成本额度；None 表示该维度无上限。"""
+        """剩余成本额度；None 表示该维度无上限。
+
+        浮点累加可能在边界留下极小残留（如 10 次 0.1 累出 0.9999999999999999），
+        此时 remaining 会是一个接近 0 的正数而非精确 0。这是浮点表示的固有误差，
+        不影响 ``consume`` 的熔断判据。
+        """
         if self._max_cost is None:
             return None
         return self._max_cost - self._current_cost
 
     @property
     def is_exhausted(self) -> bool:
-        """是否任一**有限**维度已经用满（再来一次正数消耗即会熔断）。"""
+        """是否任一**有限**维度的已用量已达到或超过上限。
+
+        口径说明：判据是当前账本读数与上限的直接比较，不引入浮点容差——容差会
+        带来「差多少才算满」的新边界问题，而熔断的正确性由 ``consume`` 的严格
+        大于判据保证。浮点累加可能在边界留下极小残留（如 10 次 0.1 累出
+        0.9999999999999999），此时本属性仍返回 False，且紧接着的一次极小增量
+        可能因舍入而不改变账本——这属于浮点表示固有误差，不应按「用满即耗尽」
+        的绝对语义理解。
+        """
         if self._max_tokens is not None and self._current_tokens >= self._max_tokens:
             return True
         return self._max_cost is not None and self._current_cost >= self._max_cost
+
+    def snapshot(self) -> dict[str, float | int | bool | None]:
+        """返回当前账本的一体化只读快照。
+
+        字段名与 ``BudgetExceeded.context`` 保持对齐，报告层因此可以在正常收尾与
+        熔断两种路径上用同一段代码取账本，不必分别去读六个属性。
+
+        Args:
+            无。
+
+        Returns:
+            dict[str, float | int | bool | None]: 含 ``max_tokens``、``max_cost``、
+                ``current_tokens``、``current_cost``、``remaining_tokens``、
+                ``remaining_cost``、``is_exhausted`` 七个键的新字典。
+
+                上限与剩余额度在该维度无上限时为 None（而非 inf）。返回值是快照，
+                修改它不影响 Budget 本体。
+        """
+        return {
+            "max_tokens": self._max_tokens,
+            "max_cost": self._max_cost,
+            "current_tokens": self._current_tokens,
+            "current_cost": self._current_cost,
+            "remaining_tokens": self.remaining_tokens,
+            "remaining_cost": self.remaining_cost,
+            "is_exhausted": self.is_exhausted,
+        }
 
     async def consume(self, tokens: int, cost: float = 0.0) -> None:
         """记账一次消耗；超限则快速失败且不部分扣减。
