@@ -2,14 +2,14 @@
 
 - **日期**：2026-09-26
 - **状态**：已接受（Accepted）
-- **关联**：`docs/PROJECT-PLAN.md` 项目定位（库/CLI 形态）与非目标
+- **关联**：`docs/ROADMAP.md` 项目定位（库/CLI 形态）与非目标
 - **决策者**：hu-chenyu
 
 ---
 
 ## 【决策】我们选了什么
 
-**AquaMind 交付为一个纯 Python 库：`pip install aquamind` 之后，同时提供 Python API、命令行工具（CLI）与 pytest 插件三种使用入口，不提供独立运行的 Web 服务形态。**
+**AquaMind 交付为一个纯 Python 库**：`pip install aquamind` 之后，同时提供 Python API、命令行工具（CLI）与 pytest 插件三种使用入口，不提供独立运行的 Web 服务形态。**
 
 这个形态意味着使用者可以把它当作普通依赖装进自己的项目里。三种入口共用同一套核心逻辑：Python API 面向脚本化集成，CLI 面向一次性评测，pytest 插件面向把质量门禁挂进既有流水线。
 

@@ -1,7 +1,7 @@
 # AquaMind
 
 > **AquaMind——LLM 应用在并发阶梯负载下的质量退化测试工具。**
-> 旗舰：并发阶梯实验 + 退化统计判定（S1-S4：bootstrap 置信区间/重复测量噪声基线/效应量/配对置换检验）+ 测量有效性校验（S5-S8：循环滞后（GIL 计时污染）自校准/协调遗漏/截尾分离/冷启动分离）——把"负载让质量掉多少"变成可统计判定、可复现、可门禁的结论；配套公开校准夹具。
+> 旗舰：并发阶梯实验 + 退化统计判定（S1-S4：bootstrap 置信区间/重复测量噪声基线/效应量/配对置换检验）+ 测量有效性校验（S5-S8：循环滞后（GIL 计时污染）自校准/协调遗漏/截尾分离/冷启动分离）——把"负载让质量掉多少"变成可统计判定、可复现、可门禁的结论；配套校准夹具（calibration fixtures）。
 
 [![CI](https://github.com/hu-chenyu/AquaMind/actions/workflows/ci.yml/badge.svg)](https://github.com/hu-chenyu/AquaMind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -22,7 +22,12 @@
 **边界**：测的是 LLM **应用**（调用模型 API 或自部署端点的客服、RAG、智能体应用）的端到端体验，不做 GPU、KV Cache、推理框架层面的引擎调优。
 
 ```bash
+# 正式版（v1.0 起）
 pip install aquamind
+# 贡献者从源码安装
+git clone https://github.com/hu-chenyu/AquaMind.git
+cd AquaMind
+pip install -e ".[dev]"
 ```
 
 ---
@@ -34,14 +39,13 @@ pip install aquamind
 | 推理引擎压测 | GuideLLM / NVIDIA AIPerf | ✅ TTFT/ITL/TPS | ✅ 并发阶梯、Pareto | ❌ 只测引擎不测内容 | ❌ |
 | 通用压测 | Locust / JMeter / k6 | △ 需手写 SSE 解析 | ✅ | ❌ 无评分钩子 | ❌ |
 | 功能评测框架 | Promptfoo / DeepEval / RAGAS | △ 可读 TTFT span | △ 仅并行加速跑分 | ✅ 指标/红队/报告 | ❌ 无退化实验设计 |
-| **AquaMind** | — | ✅ | ✅ | ✅ | ✅ 同一并发阶梯下延迟、质量、成本三曲线联动 + 双门禁；**退化统计判定（S1-S4）+ 测量有效性（S5-S8）+ 公开校准夹具** |
+| **AquaMind** | — | ✅ | ✅ | ✅ | ✅ 同一并发阶梯下延迟、质量、成本三曲线联动 + 双门禁；**退化统计判定（S1-S4）+ 测量有效性（S5-S8）+ 校准夹具** |
 
 补充事实：
 
 - NVIDIA AIPerf 有 TPS/GPU 与 TPS/User 的 Pareto 分析，但对象是推理引擎，没有回答正确性维度；
 - Promptfoo 2026 年加入了自适应限流与 trace 中的 TTFT 读取，但其并发只用于加速跑完评测，不做"并发升高 → 质量是否退化"的实验；
-- 学术界对"压力下的质量退化"已有大规模验证：REST 压力测试框架覆盖主流开源与商用模型，发现压力条件下推理表现显著下降，且输出长度溢出并非退化的唯一原因；但尚无开源工具把它产品化成一份可复现、可统计判定的测试报告。
-- AquaMind 的差异化不在"有没有并发"（DeepEval 已有 AsyncConfig、Promptfoo 已有限流 AIMD），而在把"负载下质量退化"做成可统计判定的实验：退化统计判定（S1-S4）+ 测量有效性（S5-S8），并配套公开校准夹具。
+- AquaMind 的差异化不在"有没有并发"（DeepEval 已有 AsyncConfig、Promptfoo 已有限流 AIMD），而在把"负载下质量变化"做成可统计判定的实验：退化统计判定（S1-S4）+ 测量有效性（S5-S8），并配套校准夹具。
 
 AquaMind 不声称发现了新现象，它做的是**把压测圈与评测圈两套分散指标第一次放进同一份报告**。
 
@@ -90,9 +94,9 @@ AquaMind 不声称发现了新现象，它做的是**把压测圈与评测圈两
 
 ## 6. 项目状态
 
-- 当前版本：**v0.0.4（占位包）** v1.0 计划已冻结，核心能力按 M1→M6 推进
+- 当前版本：**0.0.4（占位包）** v1.0 计划已冻结，核心能力按 M1→M6 推进
 - 源码：<https://github.com/hu-chenyu/AquaMind>
-- 开发计划：[`docs/PROJECT-PLAN.md`](./docs/PROJECT-PLAN.md)（v1.0：定位、模块、里程碑、方法学与维护策略）
-- 现阶段 v0.0.4 除版本号外暂无评测 API；命令行 `aquamind --help/version` 骨架可用，功能随里程碑交付
+- 开发计划：[`docs/ROADMAP.md`](./docs/ROADMAP.md)（v1.0：定位、模块、里程碑、方法学与维护策略）
+- 现阶段 0.0.4 除版本号外暂无评测 API；命令行 `aquamind --help/version` 骨架可用，功能随里程碑交付
 
 [MIT 许可证](./LICENSE) © 2026 hu-chenyu
