@@ -22,7 +22,7 @@ import typer
 app = typer.Typer(
     name="aquamind",
     help=(
-        "AquaMind —— LLM 应用在并发阶梯负载下的质量退化测试工具"
+        "AquaMind —— LLM 应用在并发阶梯负载下的质量变化判定工具"
         "（run 子命令将在 M1 里程碑提供，报告与门禁子命令将在 M4 里程碑提供，当前为骨架版本）"
     ),
     no_args_is_help=True,

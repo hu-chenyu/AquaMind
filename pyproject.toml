@@ -14,7 +14,7 @@ build-backend = "setuptools.build_meta"
 name = "AquaMind"
 # 版本号与 src/aquamind/__init__.py 的 __version__ 手工双写保持一致
 version = "0.0.4"
-description = "LLM 应用功能与非功能一体化测试工具：并发负载下联动测量 TTFT/质量退化/成本，输出 SLO 双门禁报告"
+description = "LLM 应用在并发阶梯负载下的质量变化判定工具：统计推断+测量有效性+预注册冻结，输出可复算门禁结论"
 readme = "README.md"
 requires-python = ">=3.11"
 # 许可证采用 PEP 639 的 SPDX 表达式写法，不使用已弃用的 License 分类器
