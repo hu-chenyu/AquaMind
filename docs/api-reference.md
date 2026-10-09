@@ -17,7 +17,7 @@ API 参考与源码一旦由人手工维护两份，二者的偏差只是时间�
 ```python
 import aquamind
 
-aquamind.__version__  # "0.0.3"
+aquamind.__version__  # "0.0.4"
 ```
 
 除版本标识外暂无其他公共 API。
