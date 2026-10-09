@@ -8,7 +8,7 @@
 
 完整的命令行程序（``run`` / ``report`` / ``cache`` 等子命令）将在 M1-D12
 （CLI `run` 集成，AM-Day14，2026-10-12）起逐步落地，`report` 子命令随 M4-D09
-（报告渲染能力）提供（见 docs/PROJECT-PLAN.md，选型决策见
+（报告渲染能力）提供（见 docs/ROADMAP.md，选型决策见
 docs/adr/0006-typer-cli.md）。
 """
 
