@@ -2,7 +2,7 @@
 
 - **日期**：2026-09-26
 - **状态**：已接受（Accepted）
-- **关联**：技术栈选型（见开发计划）、`docs/PROJECT-PLAN.md` asyncio 并发控制（M3-D04）与 VCR 时序回放（M1-D06a~c）
+- **关联**：技术栈选型（见开发计划）、`docs/ROADMAP.md` asyncio 并发控制（M3-D04）与 VCR 时序回放（M1-D06a~c）
 - **决策者**：hu-chenyu
 
 ---

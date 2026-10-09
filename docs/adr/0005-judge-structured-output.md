@@ -2,7 +2,7 @@
 
 - **日期**：2026-09-26
 - **状态**：已接受（Accepted）
-- **关联**：`docs/PROJECT-PLAN.md` LLM-as-Judge 裁判引擎（M2-D04，JudgeScorer v1）
+- **关联**：`docs/ROADMAP.md` LLM-as-Judge 裁判引擎（M2-D04，JudgeScorer v1）
 - **决策者**：hu-chenyu
 
 ---

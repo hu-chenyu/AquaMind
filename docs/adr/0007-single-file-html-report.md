@@ -2,7 +2,7 @@
 
 - **日期**：2026-09-26
 - **状态**：已接受（Accepted）
-- **关联**：技术栈选型（见开发计划）、`docs/PROJECT-PLAN.md` 任务 M4-D09a/b
+- **关联**：技术栈选型（见开发计划）、`docs/ROADMAP.md` 任务 M4-D09a/b
 - **决策者**：hu-chenyu
 
 ---
