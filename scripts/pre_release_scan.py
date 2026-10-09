@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 # tracked 内容禁止出现：与对外口径冲突的表述
+# 词表为唯一权威（2026-10-09 起：每日话术模板 v1.2 统一调用本脚本，模板不再重复维护词表）
 FORBIDDEN_TRACKED = [
     # 注：PyPI 分发已恢复（2026-10-09 决策），故不再禁止 pypi.org / pip install aquamind
     # 注：校准夹具为正式术语（v3.7 确定），不在禁止之列
@@ -23,6 +24,20 @@ FORBIDDEN_TRACKED = [
     "v0.0.3",
     "2507.10541",
     "工程化协作",
+    # 职业敏感词（2026-10-09 自每日话术模板 v1.2 迁移并入；入库交付物不得出现求职/面试语境）
+    "脱稿",
+    "面试",
+    "话术",
+    "前1%",
+    "求职",
+    "简历",
+    "对标",
+    "镀金",
+    "冲刺",
+    "面试官",
+    "候选人",
+    "第一梯队",
+    "2029岗位投递",
 ]
 
 # 未跟踪文件名禁止包含：内部材料文件名关键词
@@ -31,7 +46,11 @@ FORBIDDEN_NAME_PATTERNS = ["内部", "计划草稿", "draft", "wip"]
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *args], capture_output=True, text=True, encoding="utf-8"
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
 
