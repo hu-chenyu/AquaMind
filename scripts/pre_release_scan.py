@@ -18,14 +18,14 @@ import sys
 # tracked 内容禁止出现：与对外口径冲突的表述
 FORBIDDEN_TRACKED = [
     # 注：PyPI 分发已恢复（2026-10-09 决策），故不再禁止 pypi.org / pip install aquamind
-    "校准夹具",
+    # 注：校准夹具为正式术语（v3.7 确定），不在禁止之列
     "v0.0.4",
     "2507.10541",
     "工程化协作",
 ]
 
-# 未跟踪文件名禁止包含：内部评审材料关键词
-FORBIDDEN_NAME_PATTERNS = ["终评", "评审", "加强点", "共识"]
+# 未跟踪文件名禁止包含：内部材料文件名关键词
+FORBIDDEN_NAME_PATTERNS = ["内部", "计划草稿", "draft", "wip"]
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -44,6 +44,8 @@ def main() -> int:
         "grep", "-n", "-I",
         *[arg for p in FORBIDDEN_TRACKED for arg in ("-e", p)],
         "--",
+        # 扫描器自身包含模式字面量，排除自匹配
+        ":(exclude)scripts/pre_release_scan.py",
     )
     # git grep 无匹配时退出码为 1，属正常
     if grep.returncode not in (0, 1):
