@@ -237,6 +237,7 @@ build/
 
 # 仓库根级内部文档兜底（不依赖关键词）
 /AquaMind_*.md
+/PROJECT_PLAN.md
 
 # 内部材料文件名兜底（二层保护）
 *draft*.md
