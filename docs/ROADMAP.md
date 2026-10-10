@@ -40,7 +40,7 @@ pytest_plugin.py           # M6：pytest 插件（退出码接线）
 - **开环并发阶梯**：恒定到达率 / Poisson 调度，不掩盖排队；LoadProfile 按思考时间与输入输出长度抽样，参数矩阵快照可追溯；
 - **统计判定（S1-S4）**：配对 BCa 置信区间、噪声基线、效应量、配对置换 + Jonckheere-Terpstra 趋势检验 + Holm 校正；
 - **测量有效性（S5-S8）**：循环滞后自校准、协调遗漏报告、截尾分离、冷启动分离——低于底噪不报告；
-- **五态四码门禁**：PASS/STABLE=0、FAIL=1、WARN=2、INCONCLUSIVE=3（UNVERIFIABLE 为原因码族），可直接接入 CI；
+- **五态四码门禁**：PASS/STABLE=0、FAIL=1、WARN=2、INCONCLUSIVE=3，可直接接入 CI；`UNJUDGEABLE` 是「该条判定不可判」的状态码，`UNVERIFIABLE` 是与之配套的原因码族（两者不混用：`UNJUDGEABLE` 说发生了什么，`UNVERIFIABLE` 说为什么）；
 - **三层自证**：scipy 对拍（6 位小数）、蒙特卡洛覆盖率回归、meta 故障注入验证；
 - **时序保真回放**：chunk 级录制与调度回放，CI 全程零 API key。
 

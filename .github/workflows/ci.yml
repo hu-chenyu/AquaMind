@@ -8,6 +8,11 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  # 测试收集数下限（比照 TestMatrix 的 TEST_COUNT_BASELINE 做法，改动为 -lt 下限）。
+  # 当前 M1 实收 548 条；下调此值等于承认「删掉一部分用例」，须在提交信息里说明。
+  TEST_COUNT_FLOOR: "548"
+
 jobs:
   quality:
     name: lint-test (${{ matrix.os }} / py${{ matrix.python-version }})
@@ -49,14 +54,30 @@ jobs:
         run: pip-audit
 
       - name: Ruff lint
-        run: ruff check src tests
+        # scripts/ 纳入检查：pre_release_scan.py 是 tracked 公开脚本，
+        # 风格退化不应只在本地才可见。
+        run: ruff check src tests scripts
 
       - name: Mypy strict
         run: mypy src
 
-      - name: Pytest
+      - name: Test collection floor
+        # 收集数下限门禁：防止「测试被误删」或「全部用例收集失败」时 CI 仍判绿。
+        # 用 -lt 下限而非相等，新增用例不必改此处；确需下调时须确认是刻意删用例。
         run: |
-          # pytest 退出码 5 = 未收集到测试（D2 时 tests/ 仅有 .gitkeep 占位）。
-          # M1 首个测试落地后退出码 5 不再出现，本容忍逻辑即自动失效；
-          # 真实失败（1=用例失败、2=测试中断）仍会让 CI 变红，不会被吞掉。
-          pytest -q || [ $? -eq 5 ]
+          count=$(pytest --collect-only -q 2>&1 | grep -oE '[0-9]+ tests? collected' | grep -oE '[0-9]+' | head -1)
+          if [ -z "$count" ]; then
+            echo "收集数门禁：未能解析到收集数（pytest --collect-only 输出异常）" >&2
+            pytest --collect-only -q 2>&1 | tail -20 >&2
+            exit 1
+          fi
+          if [ "$count" -lt "$TEST_COUNT_FLOOR" ]; then
+            echo "收集数 $count 低于下限 $TEST_COUNT_FLOOR" >&2
+            exit 1
+          fi
+          echo "收集数 $count >= 下限 $TEST_COUNT_FLOOR，通过"
+
+      - name: Pytest
+        # 硬门禁，不再容忍退出码 5。M1 首批用例已入库（当前 548 条），
+        # 「未收集到测试」只应表示真实故障，不该与通过等价。
+        run: pytest -q
