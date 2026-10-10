@@ -247,3 +247,7 @@ build/
 
 # bug 审计报告（内部材料，暂不入库）
 docs/bug_audit_report_*.md
+
+# ---- 发布合规词表（本地维护，不入库）----
+# pre_release_scan.py 从此文件读取词表，仓库内不保留字面量
+/.wordlist.local

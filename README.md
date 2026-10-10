@@ -174,6 +174,12 @@ src/aquamind/
 
 ---
 
+## 贡献
+
+发布前合规扫描的词表不随仓库分发，需在仓库根自建 `.wordlist.local`（每行一个禁止模式，`#` 开头为注释），或用 `--wordlist PATH` / `AQUAMIND_SCAN_WORDLIST` 指定路径；词表缺失时脚本直接失败而非静默放行。
+
+---
+
 ## License
 
 [MIT](./LICENSE) © 2026 hu-chenyu
