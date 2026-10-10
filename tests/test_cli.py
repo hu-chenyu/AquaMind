@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import io
 import json
+import re
 import runpy
 import sys
 import warnings
@@ -46,6 +47,8 @@ from aquamind.sse import (
 
 # run 用例里的假端点与假凭据：全为测试数据，不含任何真实密钥
 _TEST_BASE_URL = "https://api.example.test/v1"
+# ANSI 转义序列（CSI SGR）：help 文本断言前需剥离，否则着色与否会决定断言成败
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 _TEST_API_KEY = "test-token-not-a-real-key"
 _TEST_PROMPT = "你好"
 # 失败路径用的上游错误体：故意带一段敏感串，用于验证它不会随错误信息外泄
@@ -289,6 +292,24 @@ def _record_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return calls
 
 
+def _help_text(args: list[str]) -> str:
+    """执行 help 子命令并返回剥掉 ANSI 颜色码的纯文本。
+
+    typer 在检测到 ``GITHUB_ACTIONS`` 时会强制开启彩色输出（让 Actions 日志可读），
+    而 rich 会把 ``--speed`` 这类选项名渲染成 ``-`` 与 ``speed`` 两段独立着色的片段，
+    字面量 ``--speed`` 因而不再连续出现——本地无该变量、CI 有，同一份断言一绿一红。
+    断言前统一剥掉 ANSI 序列，使 help 文本的断言与「当前是否着色」彻底解耦。
+
+    Args:
+        args: 传给 app 的参数（如 ``["run", "--help"]``）。
+
+    Returns:
+        str: 去除 ANSI 转义序列后的标准输出。
+    """
+    result = CliRunner().invoke(app, args)
+    return _ANSI_ESCAPE.sub("", result.stdout)
+
+
 def _run_as_module(args: list[str], monkeypatch: pytest.MonkeyPatch) -> tuple[int, str]:
     """以 __main__ 身份执行 cli 模块，返回（退出码, 标准输出）。
 
@@ -403,15 +424,15 @@ class TestRunCommandContract:
 
     def test_run_help_documents_speed_unit(self) -> None:
         """帮助文本应写明 --speed 的单位（字符/秒）与 0 表示全速。"""
-        result = CliRunner().invoke(app, ["run", "--help"])
-        assert "--speed" in result.stdout
-        assert "字符/秒" in result.stdout
+        text = _help_text(["run", "--help"])
+        assert "--speed" in text
+        assert "字符/秒" in text
 
     def test_run_help_documents_config_argument(self) -> None:
         """帮助文本应列出配置文件位置参数。"""
-        result = CliRunner().invoke(app, ["run", "--help"])
-        assert "config_path" in result.stdout
-        assert "运行配置文件" in result.stdout
+        text = _help_text(["run", "--help"])
+        assert "config_path" in text
+        assert "运行配置文件" in text
 
     def test_negative_speed_is_usage_error(self) -> None:
         """--speed 为负数应在参数解析阶段被拒（退出码 2），且不进入命令体。"""
