@@ -136,7 +136,7 @@ asyncio.run(main())
 ```
 src/aquamind/
 ├── __init__.py        # 包入口与版本号（__version__）
-├── cli.py             # 命令行入口（typer）：aquamind --help / version
+├── cli.py             # 命令行入口（typer）：aquamind --help / version / run（含 --speed）
 ├── config.py          # 全局配置（pydantic-settings；AQ_ 前缀环境变量 / .env）
 ├── exceptions.py      # 异常体系（AquaMindError → Config / Loader / Adapter / Replay / Budget）
 ├── loaders.py         # YAML/JSON 用例加载与契约校验（load_cases）

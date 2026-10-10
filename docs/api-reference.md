@@ -12,7 +12,8 @@ API 参考与源码一旦由人手工维护两份，二者的偏差只是时间�
 
 ## 当前可用
 
-0.0.4 仅暴露一个版本标识：
+顶层导出由 `aquamind.__all__` 承诺，当前**仅含版本号**——这是刻意的最小承诺面设计，
+避免 `from aquamind import *` 污染调用方命名空间：
 
 ```python
 import aquamind
@@ -20,21 +21,38 @@ import aquamind
 aquamind.__version__  # "0.0.4"
 ```
 
-除版本标识外暂无其他公共 API。
+子模块 API 不受 `__all__` 限制，已可直接导入使用。M1 已交付的公开符号如下
+（可用 `dir()` 与 `help()` 自行核对）：
+
+| 模块 | 公开符号 |
+|---|---|
+| `aquamind.models` | `TestCase` / `ExpectedSpec` / `ScoreTag` |
+| `aquamind.loaders` | `load_cases` / `LoaderError` |
+| `aquamind.adapters` | `BaseAdapter` / `AdapterResponse` / `CallableAdapter` / `OpenAIAdapter` |
+| `aquamind.exceptions` | `AquaMindError` 及其 `Config` / `Loader` / `Adapter` / `Replay` / `Budget` 子类 |
+| `aquamind.config` | `Settings` / `load_config` |
+| `aquamind.retry` | `ErrorKind` / `classify_error` / `is_retryable` / `with_retry` |
+| `aquamind.budget` | `Budget` / `BudgetError` / `BudgetExceeded` |
+| `aquamind.sse` | `SSEEvent` / `SSEStreamParser` / `parse_sse_events` / `iter_stream_deltas` |
+| `aquamind.replay` | `Cassette` / `record` / `find_match` / `play` / `play_timed` / `TimingDeviation` / `ReplayError` |
+| `aquamind.cli` | `app` / `run` / `version` |
+
+子模块的**稳定面自 M2 起承诺**（接口随评分层与批量执行接入而扩展）；
+M1 阶段这些符号可用但不承诺跨版本稳定。
 
 ## 计划中的模块结构（待补充）
 
 以下模块按分层设计，将随里程碑逐步落地。**注意：这是既定的分层方案，不是当前可用清单。**
 
-| 层 | 模块 | 职责 | 里程碑 |
-|---|---|---|---|
-| 契约层 | `aquamind.models` | pydantic 模型定义 | M1 |
-| 接入层 | `aquamind.adapters` | 被测对象接入 | M1 |
-| 评分层 | `aquamind.scorers` | 精确匹配与 LLM-as-Judge 裁判 | M2 |
-| 引擎层 | `aquamind.load_engine` | 并发阶梯编排 | M3 |
-| 指标层 | `aquamind.metrics` | 流式指标（TTFT/ITL/百分位/TPS/goodput） | M3 起 |
-| 报告层 | `aquamind.report` | 报告渲染 | M4-D09 |
-| 命令行 | `aquamind.cli` | 命令行入口 | M1 |
+| 层 | 模块 | 职责 | 里程碑 | 当前状态 |
+|---|---|---|---|---|
+| 契约层 | `aquamind.models` | pydantic 模型定义 | M1 | 已交付 |
+| 接入层 | `aquamind.adapters` | 被测对象接入 | M1 | 已交付 |
+| 评分层 | `aquamind.scorers` | 精确匹配与 LLM-as-Judge 裁判 | M2 | 规划中 |
+| 引擎层 | `aquamind.load_engine` | 并发阶梯编排 | M3 | 规划中 |
+| 指标层 | `aquamind.metrics` | 流式指标（TTFT/ITL/百分位/TPS/goodput） | M3 起 | 规划中 |
+| 报告层 | `aquamind.report` | 报告渲染 | M4-D09 | 规划中 |
+| 命令行 | `aquamind.cli` | 命令行入口 | M1 | 已交付（`run` 子命令在 M1-D12 接入） |
 
 各层之间的调用关系，见 [开发计划](./ROADMAP.md) 中的分层架构图。
 

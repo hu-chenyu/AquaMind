@@ -14,13 +14,16 @@ build-backend = "setuptools.build_meta"
 name = "AquaMind"
 # 版本号与 src/aquamind/__init__.py 的 __version__ 手工双写保持一致
 version = "0.0.4"
-description = "LLM 应用在并发阶梯负载下的质量变化判定工具：统计推断+测量有效性+预注册冻结，输出可复算门禁结论"
+description = "LLM 应用并发质量判定工具（建设中）：M1 底座已交付（SSE 帧解析 / 时序回放 / 预算熔断 / 多模型适配）；M3-M4 将交付统计推断 + 测量自证 + 预注册冻结门禁。回答「这个下降是不是真的」。"
 readme = "README.md"
 requires-python = ">=3.11"
 # 许可证采用 PEP 639 的 SPDX 表达式写法，不使用已弃用的 License 分类器
 license = "MIT"
 authors = [{ name = "hu-chenyu" }]
-keywords = ["llm", "testing", "evaluation", "llm-testing", "performance-testing", "load-testing", "quality-gate", "slo", "ttft", "pytest", "rag", "agent"]
+# 检索词只保留已交付或已定位的：M1 已交付 sse / replay / budget；
+# rag 会把不做的 RAG 测试引来，ttft 属 M3 指标，agent 用例属 M2，
+# 三者交付后再随对应里程碑加回，避免检索结果与实际能力错位。
+keywords = ["llm", "testing", "evaluation", "llm-testing", "performance-testing", "load-testing", "quality-gate", "sse", "replay", "statistical-testing", "pytest", "ci-cd", "agent-testing", "llm-agent"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
