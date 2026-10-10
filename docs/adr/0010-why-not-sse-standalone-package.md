@@ -2,6 +2,7 @@
 
 - **日期**：2026-10-11
 - **状态**：已接受（Accepted）
+- **provenance**：决策日 2026-10-11；三关预检执行于 2026-10-10（外部证据可查，见下文预检 C 的 changelog 原文与 PyPI metadata）
 - **关联**：P6-1 外部验证路径 2、`src/aquamind/sse.py`、`scripts/pre_release_scan.py`、ADR 0001（库形态而非平台）
 - **决策者**：hu-chenyu
 
@@ -35,7 +36,7 @@
 | httpx 属性访问 | 仅两处，均在类型标注位置：L405 `iter_stream_deltas(response: httpx.Response)`、L472 `collect_stream_content(response: httpx.Response)` |
 | 注解是否惰性求值 | 是。文件 L26 有 `from __future__ import annotations`，标注在运行时不求值 |
 
-**结论：剥离成本约 10 分钟**（删 L31 import + 在 `TYPE_CHECKING` 下改用 `Any`）。技术上可行。
+**结论：剥离成本约 10 分钟**（删 L31 import + 把 L405 / L472 的 `httpx.Response` 标注移入 `if TYPE_CHECKING:` 块下，保留完整类型信息而非退化成 `Any`；文件 L26 的 `from __future__ import annotations` 已使标注在运行时不求值）。技术上可行。
 
 ### 预检 B：`.exceptions` 耦合面 —— 通过
 
@@ -44,9 +45,17 @@
 | 依赖的异常符号 | 仅 `AdapterError` 一个 |
 | 其余包内依赖 | 无。`sse.py` 不引用 models / config / budget / replay |
 | `AdapterError` 自身规模 | `src/aquamind/exceptions.py` L88-L95，共 8 行，只有类声明与 docstring，无逻辑 |
-| `AdapterError` 在 sse.py 的引用面 | 全文 21 次，其中 9 处是真实 `raise`（L106 / L119 / L214 / L296 / L324 / L432 / L525 / L535 / L549），其余为 docstring 与标注 |
+| `AdapterError` 在 sse.py 的引用面 | **全文约 21 处引用，其中 9 处是真实 `raise`**（L106 / L119 / L214 / L296 / L324 / L432 / L525 / L535 / L549），其余为 docstring 与类型标注 |
 
-**结论：耦合形态单一，抽取成本低**（复制异常类 / 定义本地 `SSEDecodeError` / 提升为独立小模块，三选一）。
+**耦合形态单一，抽取成本低。** 三条技术路线：
+
+| 路线 | 做法 | 代价 |
+|---|---|---|
+| ① 复制异常类 | 在包内重建 `AdapterError` | **高**——必须连同基类 `AquaMindError` 一起复制：它带 `__init__(message, context)` 与两条**防信息泄露**的方法（`__str__` 与 `__repr__` 均只渲染 context 的键名、不渲染取值，见 exceptions.py L35-L52 / L54-L62）。漏抄任一条，异常一旦进入 logging 或异常聚合器就会把响应体、完整 URL 之类的取值带出去——这是一条已修复过的泄露通道，不是普通样板 |
+| ② 定义本地 `SSEDecodeError` | 包内自成一套异常 | 中——语义分裂。届时生态里会并存 `AquaMindError` / `AdapterError` / `SSEDecodeError` 三种错误口径，跨包捕获时需要用户自己判断该捕哪一种，得在包 README 里显式声明这层语义差异 |
+| ③ 提升为独立小模块 | 把 `AquaMindError` + `AdapterError` 一并移入 `aquamind_sse/errors.py` | 低——纯物理移动，两条防泄露属性跟着走，不存在漏抄 |
+
+**显式选择路线 ③（提升为独立小模块）。** 理由是另外两条都在"安全属性靠人记得抄"或"错误语义分裂"上留了口子，而路线 ③ 把这两个口子都关掉，且改动量最小。
 
 ### 预检 C：与 httpx-sse 的正面对比 —— 不通过（否决理由）
 
@@ -111,6 +120,18 @@
 | **路径 3：pytest 插件** | 最小 scope（pytest11 入口 + marker + fixture + 退出码接线），作为"被真实使用"的最短路径 | M5 尾：D85-86 |
 
 技术文同时承担一项额外职责：**显式标注"SSE 解析的行为与 httpx-sse 做过对拍"**。这把"重复造轮子"转成"了解生态现状并做了有依据的取舍"，是低成本的可信度增益。
+
+---
+
+## 【替代动作】放弃抽包之后，这三件事仍值得做
+
+本 ADR 只否决"抽独立包"这一个动作，不否决由此产生的全部工作。以下三项与抽包与否无关，且成本都不高：
+
+**① 回馈上游：把未覆盖的边界用例整理成 issue/PR 提给 httpx-sse。** 本项目 47 条边界用例中，httpx-sse 未覆盖的约 10%（断帧容错、缓冲上限、无尾空行残留、非法 UTF-8 不泄裸异常）是真实增量。把它们整理成可复现的 issue 提给上游，价值有三层：给生态补上真实缺口；建立真实的外部足迹（当前 PRML 与 httpx-sse 的作者都是单人维护，开源生态的反馈密度很低）；反哺本 ADR 的故事线——「我们不仅用过它，还研究过它的边界」。**注意此项尚未排期**，待三方表决后定。
+
+**② 把预检 C 的对比结论直接用作技术文素材。** 本节的对比过程（AquaMind 剩余增量 vs httpx-sse 已覆盖能力 vs changelog 里那两条修复）已经是可直接引用的成稿，不需要重新组织语言。技术文写"你看到的质量变化有多少是真的"时，可以用它作为「做工程判断」的例子。
+
+**③ 记录方向性判断：若未来做「LLM 流式质量探针」，再重新评估抽包。** 本次否决的前提是「SSE 解析本身没有独立生态位」。如果产品方向变成向外部署一个**流式质量采集探针**——即用户需要在自己的生产环境里持续观测流式质量——那么"独立分发一个可单独安装的探针"就有了真实需求，与本次评估的对象（一个通用 SSE 解析库）不是同一件事。届时应重新做三关预检，而不是直接引用本 ADR 的结论。
 
 ---
 
