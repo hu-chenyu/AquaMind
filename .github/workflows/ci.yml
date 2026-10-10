@@ -56,7 +56,9 @@ jobs:
       - name: Ruff lint
         # scripts/ 纳入检查：pre_release_scan.py 是 tracked 公开脚本，
         # 风格退化不应只在本地才可见。
-        run: ruff check src tests scripts
+        # --output-format=github：把违规写成 check-run annotation（含文件/行号/规则），
+        # 这样排查不必依赖有鉴权才能下载的 step 日志。
+        run: ruff check src tests scripts --output-format=github
 
       - name: Mypy strict
         run: mypy src
