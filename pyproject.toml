@@ -28,9 +28,9 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    # 只声明 CI 实际跑过的版本。当前矩阵为 3.11（ubuntu + windows 双平台）；
+    # 3.12/3.13 未经任何流水线验证，故不声明。D18 加入探测位验证通过后再加回。
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -52,7 +52,12 @@ dev = [
     "pytest-cov>=5.0",
     "pytest-asyncio>=0.23",
     "mypy>=1.10",
-    "ruff>=0.5",
+    # 上界不是保守，而是可复现：ruff 0.17 扩大了默认规则集（新增 EXE001 等），
+    # 无上界时 CI 每次都会装到当时最新版，判定口径随发布漂移。
+    # Run #55 即由此触发：scripts/ 首次纳入 lint 即撞上 EXE001，且该规则只在类 Unix
+    # 生效，Windows 侧不判定，本地无论如何都复现不出来。
+    # D18 CI 矩阵升级时重新评估上界。
+    "ruff>=0.5,<0.18",
     "build>=1.2",
     "twine>=5.1",
 ]
