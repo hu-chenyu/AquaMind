@@ -18,7 +18,13 @@
 
 ## 【背景】当时的动机
 
-`src/aquamind/sse.py` 是 M1 最深的模块之一：572 行、14 个定义（全部带 docstring）、47 条边界用例、100% 分支覆盖率。基于此产生了"它够深，值得独立成包"的判断（P6-1 路径 2，计划名 `aquamind-sse`）。
+`src/aquamind/sse.py` 是 M1 最深的模块之一：572 行、14 个定义（全部带 docstring）、47 条边界用例、100% 分支覆盖率。
+
+> **口径（2026-10-11 复核，可复现）**：「47 条」指 `tests/test_cli.py` 中 5 个直接针对 SSE 解析 API 的测试类，其用例数合计——`TestIterStreamDeltas` 14 + `TestParseSseEvents` 13 + `TestSSEStreamParser` 10 + `TestSseEventContract` 8 + `TestCollectStreamContent` 2 = **47**。本数按**测试类**判定，而非按用例名匹配：若按「用例名含 sse/SSE」搜索只得 32 条，因为 `TestIterStreamDeltas` 与 `TestCollectStreamContent` 的类名与用例名都不含 sse 字样。两个口径都对，但只有本口径等于 47。
+>
+> 复现方式：`pytest tests/test_cli.py --collect-only -q` 后按测试类分组计数。
+
+基于此产生了"它够深，值得独立成包"的判断（P6-1 路径 2，计划名 `aquamind-sse`）。
 
 在决策前做了**三关预检**，三关全过才发包。结论是：**前两关通过，第三关不通过**——且第三关是否决性的。
 
@@ -127,7 +133,7 @@
 
 本 ADR 只否决"抽独立包"这一个动作，不否决由此产生的全部工作。以下三项与抽包与否无关，且成本都不高：
 
-**① 回馈上游：把未覆盖的边界用例整理成 issue/PR 提给 httpx-sse。** 本项目 47 条边界用例中，httpx-sse 未覆盖的约 10%（断帧容错、缓冲上限、无尾空行残留、非法 UTF-8 不泄裸异常）是真实增量。把它们整理成可复现的 issue 提给上游，价值有三层：给生态补上真实缺口；建立真实的外部足迹（当前 **PRML（Pre-Registered ML Manifest Specification；「预注册哈希兼容规范」为功能释义，非英文名的逐字翻译）** 与 httpx-sse 的作者都是单人维护，开源生态的反馈密度很低）；反哺本 ADR 的故事线——「我们不仅用过它，还研究过它的边界」。
+**① 回馈上游：把未覆盖的边界用例整理成 issue/PR 提给 httpx-sse。** 本项目 47 条边界用例（口径见上文【背景】节的复核说明）中，httpx-sse 未覆盖的约 10%（断帧容错、缓冲上限、无尾空行残留、非法 UTF-8 不泄裸异常）是真实增量。把它们整理成可复现的 issue 提给上游，价值有三层：给生态补上真实缺口；建立真实的外部足迹（当前 **PRML（Pre-Registered ML Manifest Specification；「预注册哈希兼容规范」为功能释义，非英文名的逐字翻译）** 与 httpx-sse 的作者都是单人维护，开源生态的反馈密度很低）；反哺本 ADR 的故事线——「我们不仅用过它，还研究过它的边界」。
 
 **已排期**：M2 末（10-30/31）或 M3 头 D33 机动，**半天时间盒，超时即止**。执行方式为**先 issue 后 PR**（最小复现 + 差异说明 + 47 用例背景），**不预设被合并**；未被合并同样作为外部足迹证据记入本节。
 
