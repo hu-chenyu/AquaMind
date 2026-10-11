@@ -3,7 +3,7 @@
 > **LLM 应用在并发阶梯负载下的质量变化判定工具**——回答"这个下降是不是真的"。
 
 [![CI](https://github.com/hu-chenyu/AquaMind/actions/workflows/ci.yml/badge.svg)](https://github.com/hu-chenyu/AquaMind/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hu-chenyu/AquaMind/blob/main/LICENSE)
 
 ---
 
