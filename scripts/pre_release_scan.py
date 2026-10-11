@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """发布前最小扫描。
 
-检查两类问题：
+检查三类问题：
 1. tracked 内容里的禁止模式（对外材料不应出现的口径）
 2. 未跟踪文件里的材料关键词（不应被 git add -A 带进仓库）
+3. tracked 内容里的疑似明文凭据（内置正则规则，不依赖可配置词表）
 
 词表不随仓库分发，按以下优先级解析：
     1. 命令行 --wordlist PATH
@@ -39,11 +40,23 @@ FORBIDDEN_NAME_PATTERNS = ["内部", "计划草稿", "draft", "wip"]
 #   同理，词表支持中文等任意文本，这里只处理有固定形态的凭据，故用正则而非字面量。
 #
 # 三条规则分别对应常见的：OpenAI/Anthropic 风格密钥、AWS Access Key ID、
-# Authorization 头里的 Bearer 令牌。示例目录里的占位串
-# （demo-token-not-a-real-credential 等）刻意带不可路由的描述性文本，
-# 长度与字符集都不满足下列形态，因此不会被误杀。
+# Authorization 头里的 Bearer 令牌。
+#
+# 正则必须兼容两套引擎：本文件用 `git grep -E` 做粗筛（POSIX ERE），
+# 再用 Python `re` 做逐行精筛。因此**不能用非捕获组 (?:...)**——POSIX ERE
+# 遇 `(?:...)` 会 fatal 报 "Invalid preceding regular expression"，让扫描
+# 每次假红，甚至被当成字面量而完全失效。
+#
+# sk- 的字符类必须含 `-`：现行密钥形态普遍带分段前缀
+# （OpenAI 的 sk-proj- / sk-svcacct- / sk-admin-，Anthropic 的
+# sk-ant-api03- / sk-ant-oat01-）。早期写成 [A-Za-z0-9] 时这些形态全部漏报，
+# 已实测确认漏 5 类。
+#
+# 仓库内的示例与脱敏用例会写入"长得像真凭据"的占位串，它们**会被规则命中**，
+# 由下方 SECRET_VALUE_ALLOWLIST 精确放行；sk- 类占位则刻意短于 20 字符阈值，
+# 天然不中，无需豁免。
 SECRET_PATTERNS = [
-    (r"sk-[A-Za-z0-9]{20,}", "疑似 OpenAI/Anthropic 风格密钥（sk- 前缀）"),
+    (r"sk-[A-Za-z0-9_-]{20,}", "疑似 OpenAI/Anthropic 风格密钥（sk- 前缀）"),
     (r"AKIA[0-9A-Z]{16}", "疑似 AWS Access Key ID（AKIA 前缀）"),
     (r"Bearer [A-Za-z0-9._-]{20,}", "疑似 Authorization: Bearer 令牌"),
 ]

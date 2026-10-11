@@ -45,8 +45,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
-          # 上下界与项目纪律一致：构建/发布工具同样不允许无上界地追最新版
-          pip install "build>=1.2" "twine>=5.1,<8"
+          # 上下界与 pyproject 的 dev extra 保持一致：构建/发布工具同样不允许
+          # 无上界地追最新版，否则发布链路的判定口径会随发布漂移。
+          pip install "build>=1.2,<2" "twine>=5.1,<8"
 
       - name: Build sdist and wheel
         run: python -m build --outdir dist/
@@ -62,7 +63,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          # v1.0 之前允许 alpha/beta/rc 等预发布版本号；v1.0 起可收紧为 --non-exclude
+          # v1.0 之前允许 alpha/beta/rc 等预发布版本号上传（PyPI 默认接受）。
+          # 若将来需要在重复发布时保留已有产物，twine upload 提供的是
+          # --skip-existing（发布链路未启用）；本 workflow 当前刻意不启用它——
+          # 误传同名产物会把「版本已存在」变成静默成功，掩盖真实问题。
           verbose: true
 
       - name: Summary
