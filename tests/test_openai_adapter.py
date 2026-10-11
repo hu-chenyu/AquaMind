@@ -180,7 +180,7 @@ class TestRequestConstruction:
 
 
 class TestStreamingNotSupported:
-    """测试流式调用的拦截（流式由 M1-D11 实现）。"""
+    """测试流式调用的拦截（流式随 M3 前置交付，原 M1-D11）。"""
 
     def test_stream_true_raises_adapter_error(self, success_transport: httpx.MockTransport) -> None:
         """stream=True 应抛 AdapterError，消息含“流式”。"""

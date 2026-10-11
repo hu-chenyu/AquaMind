@@ -45,7 +45,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade setuptools
           pip install -e ".[dev]"
-          pip install pip-audit
+          # 加上下界与项目纪律一致：工具无上界时 CI 每次装到的都是当时最新版，
+          # 判定口径随发布漂移。本地实测版本为 2.10.1，落在 >=2,<3 内。
+          pip install "pip-audit>=2,<3"
 
       - name: Security audit (pip-audit)
         # 核心期即开启依赖漏洞扫描（原计划仅维护期 T9-04 覆盖）。

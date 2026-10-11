@@ -89,7 +89,7 @@ class OpenAIAdapter(BaseAdapter):
         """
         if stream:
             raise AdapterError(
-                message="OpenAIAdapter 暂不支持流式调用（M1-D11 实现）",
+                message="OpenAIAdapter 暂不支持流式调用（流式适配随 M3 前置交付，原 M1-D11）",
                 context={"adapter": "openai", "stream": True},
             )
 

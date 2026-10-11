@@ -21,9 +21,11 @@ requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "hu-chenyu" }]
 # 检索词只保留已交付或已定位的：M1 已交付 sse / replay / budget；
-# rag 会把不做的 RAG 测试引来，ttft 属 M3 指标，agent 用例属 M2，
+# rag 会把不做的 RAG 测试引来，ttft 属 M3 指标，agent 域属 M2，
 # 三者交付后再随对应里程碑加回，避免检索结果与实际能力错位。
-keywords = ["llm", "testing", "evaluation", "llm-testing", "performance-testing", "load-testing", "quality-gate", "sse", "replay", "statistical-testing", "pytest", "ci-cd", "agent-testing", "llm-agent"]
+# agent-testing / llm-agent 同样属 M2 域，已一并移除——它们指向的是本项目
+# 尚未交付的「Agent 用例三层断言」能力，与上条注释的取舍标准自相矛盾。
+keywords = ["llm", "testing", "evaluation", "llm-testing", "performance-testing", "load-testing", "quality-gate", "sse", "replay", "statistical-testing", "pytest", "ci-cd"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
