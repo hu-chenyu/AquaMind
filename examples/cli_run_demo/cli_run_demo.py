@@ -220,9 +220,9 @@ def main() -> None:
                 "退出码 0；stdout 为四帧拼接后的完整文本；耗时接近进程启动开销",
             )
             slow, slow_seconds = _run_case(
-                "2. --speed 40：按 40 字符/秒限速",
-                [*command, str(ok_config), "--speed", "40"],
-                "退出码 0；**文本与第 1 段完全一致**，但耗时被拉长到字符数 ÷ 40 秒",
+                "2. --speed 10：按 10 字符/秒限速",
+                [*command, str(ok_config), "--speed", "10"],
+                "退出码 0；**文本与第 1 段完全一致**，但耗时被拉长到字符数 ÷ 10 秒",
             )
             bad, _ = _run_case(
                 "3. 配置文件字段非法（time_out 拼错）",
@@ -240,7 +240,7 @@ def main() -> None:
             print("小结")
             print("=" * 68)
             print(f"  全速（--speed 0）  退出码 {ok.returncode}，耗时 {ok_seconds:.2f}s")
-            print(f"  限速（--speed 40） 退出码 {slow.returncode}，耗时 {slow_seconds:.2f}s")
+            print(f"  限速（--speed 10） 退出码 {slow.returncode}，耗时 {slow_seconds:.2f}s")
             print(f"  配置字段非法       退出码 {bad.returncode}")
             print(f"  端点不可达         退出码 {unreachable.returncode}")
             print()
