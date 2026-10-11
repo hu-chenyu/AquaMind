@@ -70,7 +70,8 @@ dev = [
     "build>=1.2",
     "twine>=5.1",
 ]
-# docs：文档站点构建，M2 起随 mkdocstrings 自动生成 API 参考
+# docs：文档站点构建。M2 启用——当前 extras 安装后**暂无站点配置**
+# （仓库内无 mkdocs.yml，文档以仓库内 Markdown 为准），到时再随站点骨架一并落地。
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
@@ -84,6 +85,7 @@ openai = [
 [project.urls]
 Homepage = "https://github.com/hu-chenyu/AquaMind"
 Repository = "https://github.com/hu-chenyu/AquaMind"
+Documentation = "https://github.com/hu-chenyu/AquaMind/tree/main/docs"
 
 [project.scripts]
 # 命令行入口：app 对象由 aquamind/cli.py 提供，已随 M1-D12 交付（run 子命令）

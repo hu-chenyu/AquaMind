@@ -158,6 +158,8 @@ src/aquamind/
 
 `tests/` 为对应单元测试（pytest 全绿）；随后续里程碑将新增 `scorers/`（评分层，M2）、`load_engine/` 与 `metrics/`（负载与指标，M3）、`report/`（报告渲染，M4）等模块。
 
+`examples/` 下的可运行示例（含 `replay_demo/` 的 VCR 录制回放演示与基线生成脚本）**不随 wheel / sdist 分发**，需 clone 仓库后按 `examples/replay_demo/README.md` 运行。
+
 ---
 
 ## 路线图
@@ -190,10 +192,10 @@ src/aquamind/
 
 ## 开发状态
 
-- **当前进度**：M1 底座进入收口阶段；Day1-12 已完成，D12（CLI run 骨架，原计划 Day15）于 2026-10-10 提前交付。原计划落在 M1 的 D10 流式采集骨架与 D11 流式适配器经评估归入 M3 前置（Day36 / Day33），M1 余下为验收与收口工作。94 天开发计划至 **2026-12-31**（详见 [docs/ROADMAP.md](./docs/ROADMAP.md)）。
+- **当前进度**：M1 底座进入收口阶段；Day1-12 已完成，D12（CLI run 骨架，原计划 Day15）于 2026-10-10 提前交付。原计划落在 M1 的 D10 流式采集骨架与 D11 流式适配器经评估归入 M3 前置（Day36 / Day33），M1 余下为验收与收口工作。94 天开发计划至 **2026-12-31**（详见 [docs/ROADMAP.md](https://github.com/hu-chenyu/AquaMind/blob/main/docs/ROADMAP.md)）。
 - **已交付**：配置与异常体系、用例契约与 YAML/JSON 加载器、适配器底座（本地函数 + OpenAI 兼容）、重试退避与错误分类、预算账本、SSE 帧解析器（四类协议变体：LF/CRLF 行尾、注释与心跳行、`event`/`id`/`retry` 字段、单事件多行 `data` 拼接；另含截断容错）、VCR 录制与时序回放、`aquamind run` 流式输出接线；单元测试全绿。
 - **当前版本**：0.0.4（占位版）——除"快速开始"中标注可用与计划中的能力外，评测功能随 M1-M6 里程碑逐步交付。
-- **已知限制**：当前版本真实存在的限制、以及预注册冻结后的变更纪律（变更 = 新哈希 + 显式 amendment），见 [KNOWN_LIMITATIONS.md](./KNOWN_LIMITATIONS.md)。
+- **已知限制**：当前版本真实存在的限制、以及预注册冻结后的变更纪律（变更 = 新哈希 + 显式 amendment），见 [KNOWN_LIMITATIONS.md](https://github.com/hu-chenyu/AquaMind/blob/main/KNOWN_LIMITATIONS.md)。
 
 ---
 
@@ -205,4 +207,4 @@ src/aquamind/
 
 ## License
 
-[MIT](./LICENSE) © 2026 hu-chenyu
+[MIT](https://github.com/hu-chenyu/AquaMind/blob/main/LICENSE) © 2026 hu-chenyu
