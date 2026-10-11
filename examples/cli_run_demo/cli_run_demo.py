@@ -142,7 +142,9 @@ def _build_command() -> list[str]:
   return [sys.executable, "-m", "aquamind.cli", "run"]
 
 
-def _run_case(label: str, command: list[str], description: str) -> subprocess.CompletedProcess[str]:
+def _run_case(
+  label: str, command: list[str], description: str
+) -> tuple[subprocess.CompletedProcess[str], float]:
   """执行一次 ``aquamind run`` 并打印结果。
 
   Args:
