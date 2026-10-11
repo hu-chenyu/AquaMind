@@ -40,7 +40,7 @@ print(aquamind.__version__)  # 期望输出 0.0.4
 > **说明**：0.0.4 已提供 M1 底座模块（用例契约与 YAML/JSON 加载器、适配器底座、重试退避与错误分类、
 > 预算账本、SSE 帧解析、VCR 录制与时序回放），并已注册 `aquamind` 命令行入口
 > （`aquamind --help` / `version` / `run`，`run` 含 `--speed` 参数）；
-> `report` 与门禁子命令随 **M4-D09** 提供。
+> `report` 与门禁子命令随 **M4-D07** 提供。
 
 ## 3. 下一步（待补充）
 

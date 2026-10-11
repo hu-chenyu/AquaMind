@@ -33,8 +33,8 @@ aquamind.__version__  # "0.0.4"
 | `aquamind.config` | `Settings` / `load_config` |
 | `aquamind.retry` | `ErrorKind` / `classify_error` / `is_retryable` / `with_retry` |
 | `aquamind.budget` | `Budget` / `BudgetError` / `BudgetExceeded` |
-| `aquamind.sse` | `SSEEvent` / `SSEStreamParser` / `parse_sse_events` / `iter_stream_deltas` |
-| `aquamind.replay` | `Cassette` / `record` / `find_match` / `play` / `play_timed` / `TimingDeviation` / `ReplayError` |
+| `aquamind.sse` | `SSEEvent` / `SSEStreamParser` / `parse_sse_events` / `iter_stream_deltas` / `collect_stream_content` |
+| `aquamind.replay` | 数据模型：`Cassette` / `RequestInfo` / `ResponseInfo` / `ChunkTiming`；读写面：`record` / `find_match` / `play` / `play_timed` / `replay_request` / `replay_request_timed`；回放结果：`ReplayedResponse` / `TimedReplay`；偏差统计：`TimingDeviation`；异常：`ReplayError` |
 | `aquamind.cli` | `app` / `run` / `version` |
 
 子模块的**稳定面自 M2 起承诺**（接口随评分层与批量执行接入而扩展）；
@@ -54,7 +54,7 @@ M1 阶段这些符号可用但不承诺跨版本稳定。
 | 报告层 | `aquamind.report` | 报告渲染 | M4-D09 | 规划中 |
 | 命令行 | `aquamind.cli` | 命令行入口 | M1 | 已交付（`run` 子命令在 M1-D12 接入） |
 
-各层之间的调用关系，见 [开发计划](./ROADMAP.md) 中的分层架构图。
+各层之间的调用关系，见 [开发计划](./ROADMAP.md) 中的分层结构。
 
 ## 生成方式（待补充）
 
