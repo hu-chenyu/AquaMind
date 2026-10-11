@@ -266,8 +266,7 @@ list(replay_request_timed(request_info, cassette_dir, speed=4.0))
 
 场景覆盖 11 组，取自 `generate_baseline.py` 的构造逻辑：**请求方法**覆盖 GET / POST /
 DELETE；**请求体与响应形态**覆盖中文、英文、中文 + emoji 请求体，以及 bytes 响应体、
-无响应体（204）与
-非 2xx（503）；**请求头**覆盖带鉴权头（authorization / x-api-key，脱敏后为
+无响应体（204）与非 2xx（503）；**请求头**覆盖带鉴权头（authorization / x-api-key，脱敏后为
 sha256 摘要）与非关键噪声头（User-Agent）；**流式场景 3 组**覆盖 4 chunk 起点为 0、
 3 chunk 起点非 0（验证首包延迟被归一化）、5 chunk 含亚毫秒时刻与中英混排
 （验证 3 位小数的进位行为）。
