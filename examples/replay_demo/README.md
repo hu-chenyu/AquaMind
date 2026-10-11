@@ -260,9 +260,14 @@ list(replay_request_timed(request_info, cassette_dir, speed=4.0))
 | `timing_replay.hash_guard.tampered_hash_rejected` | 时序回放入口是否仍拦截被篡改的指纹 |
 | `cases[]` | 逐条明细：方法、指纹、三个一致标记、指纹耗时；流式场景另带 `chunk_count`/`first_arrival_ms`/`last_arrival_ms`/`arrival_monotonic`/`max_decimals`/`timing_round_trip_ok` |
 
-场景覆盖 11 组。非流式 8 组：GET/POST/DELETE、中文 body、英文 body、中文 + emoji
-body、带鉴权头（authorization / x-api-key）、带非关键噪声头（User-Agent）、
-bytes 响应体、无响应体（204）、非 2xx 响应（503）。流式 3 组：4 chunk 起点为 0、
+上表列出的是常用字段，**不是完整字段清单**——以 `scripts/replay_baseline.json` 的实际
+内容与 `generate_baseline.py` 的写出逻辑为准。逐字段抄录会随代码演进而失真，而这两者
+不会。
+
+场景覆盖 11 组，取自 `generate_baseline.py` 的构造逻辑：**请求方法**覆盖 GET / POST /
+DELETE；**请求体**覆盖中文、英文、中文 + emoji、bytes 响应体、无响应体（204）与
+非 2xx（503）；**请求头**覆盖带鉴权头（authorization / x-api-key，脱敏后为
+sha256 摘要）与非关键噪声头（User-Agent）；**流式场景 3 组**覆盖 4 chunk 起点为 0、
 3 chunk 起点非 0（验证首包延迟被归一化）、5 chunk 含亚毫秒时刻与中英混排
 （验证 3 位小数的进位行为）。
 
