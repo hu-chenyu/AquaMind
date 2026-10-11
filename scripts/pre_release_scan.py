@@ -14,7 +14,7 @@
 
 用法：
     python scripts/pre_release_scan.py [--wordlist PATH]
-退出码：0 = 通过；1 = 命中禁止模式；2 = 词表缺失或不可读
+退出码：0 = 通过；1 = 命中禁止模式 / 疑似凭据 / 未忽略材料；2 = 词表缺失或不可读
 """
 
 from __future__ import annotations
