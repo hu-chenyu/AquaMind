@@ -1,0 +1,72 @@
+name: Release
+
+# 发布流水线：tag 触发 → 构建 → 渲染预检 → 实际上传到 PyPI。
+#
+# 触发条件刻意只用 tag，不用 push to main——发布是外部可见且难以撤回的动作，
+# 不应因为一次普通提交而被触发。
+#
+# 凭据方式：PyPI Trusted Publishing（OIDC）。GitHub Actions 向 PyPI 出示短期
+# 身份令牌换取上传权限，**仓库内不存放任何 API token**（.pypirc 亦已 gitignore）。
+# 前置条件：PyPI 侧为该仓库配置好 pending publisher，绑定本 workflow 文件名。
+
+on:
+  push:
+    tags:
+      - "v*"
+  # 允许手动触发一次 dry-run（上传步骤会被跳过），用于发布前验证构建链路
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "仅构建与预检，不上传"
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    name: build & publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # OIDC 换取上传权限所需；不给 contents: write，发布不需要写仓库。
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools
+          # 上下界与项目纪律一致：构建/发布工具同样不允许无上界地追最新版
+          pip install "build>=1.2" "twine>=5.1,<8"
+
+      - name: Build sdist and wheel
+        run: python -m build --outdir dist/
+
+      - name: Render preflight (twine check)
+        # 注意：twine check 只校验长描述能否被渲染成 HTML，
+        # **不检查链接是否可达**——相对链接断链它查不出来。
+        # 那类问题由相对链接门禁单独覆盖。
+        run: python -m twine check dist/*
+
+      - name: Upload to PyPI
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dry_run }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # v1.0 之前允许 alpha/beta/rc 等预发布版本号；v1.0 起可收紧为 --non-exclude
+          verbose: true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 发布产物" >> "$GITHUB_STEP_SUMMARY"
+          ls -l dist/ >> "$GITHUB_STEP_SUMMARY" || true
