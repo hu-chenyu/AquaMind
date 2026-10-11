@@ -87,6 +87,7 @@ pytest_plugin.py           # M6：pytest 插件（退出码接线）
 | [0006](adr/0006-typer-cli.md) | 以 typer 实现命令行入口 |
 | [0007](adr/0007-single-file-html-report.md) | 报告以 jinja2 渲染为自包含单文件 HTML |
 | [0008](adr/0008-timing-replay.md) | 时序保真回放采用同步生成器 + 绝对时刻对齐 + 可测偏差 |
+| 0009 | 统计选型（**待写**，草案 M1 启动 / D45 参数定稿 / D51 全文定稿） |
 | [0010](adr/0010-why-not-sse-standalone-package.md) | 不把 SSE 帧解析器抽为独立包发布 |
 
 ## 开发状态
