@@ -1,8 +1,9 @@
 # API 参考
 
 > **本文为占位文档，内容尚未补充。**
-> 本站计划在 **M2** 起启用 `mkdocs-material` + `mkdocstrings`，从源码的 docstring
-> **自动生成** API 参考页面。届时本文将成为自动生成的入口索引，而非手工维护的清单。
+> 计划在 **M2** 起启用 `mkdocs-material` + `mkdocstrings`，从源码的 docstring
+> **自动生成** API 参考页面；**当前仓库内尚无站点配置**（无 `mkdocs.yml`），
+> 在那之前 API 参考以仓库内 Markdown 为准。届时本文将成为自动生成的入口索引，而非手工维护的清单。
 
 ## 为什么自动生成
 
