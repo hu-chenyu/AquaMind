@@ -24,7 +24,7 @@ jobs:
         python-version: ["3.11"]
 
     # Windows runner 默认 shell 为 pwsh，这里统一指定 bash（Git Bash 随 runner 内置），
-    # 保证 pytest 退出码容忍逻辑与脚本行为在两个平台上完全一致。
+    # 保证收集数门禁脚本与 pytest 调用在两个平台上行为完全一致。
     defaults:
       run:
         shell: bash
