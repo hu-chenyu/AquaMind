@@ -57,7 +57,7 @@
 
 | 路线 | 做法 | 代价 |
 |---|---|---|
-| ① 复制异常类 | 在包内重建 `AdapterError` | **高**——必须连同基类 `AquaMindError` 一起复制：它带 `__init__(message, context)` 与两条**防信息泄露**的方法（`__str__` 与 `__repr__` 均只渲染 context 的键名、不渲染取值，见 exceptions.py L35-L52 / L54-L62）。漏抄任一条，异常一旦进入 logging 或异常聚合器就会把响应体、完整 URL 之类的取值带出去——这是一条已修复过的泄露通道，不是普通样板 |
+| ① 复制异常类 | 在包内重建 `AdapterError` | **高**——必须连同基类 `AquaMindError` 一起复制：它带 `__init__(message, context)` 与两条**防信息泄露**的方法（`__str__` 与 `__repr__` 均只渲染 context 的键名、不渲染取值，见 exceptions.py L35-L52 / L54-L71）。漏抄任一条，异常一旦进入 logging 或异常聚合器就会把响应体、完整 URL 之类的取值带出去——这是一条已修复过的泄露通道，不是普通样板 |
 | ② 定义本地 `SSEDecodeError` | 包内自成一套异常 | 中——语义分裂。届时生态里会并存 `AquaMindError` / `AdapterError` / `SSEDecodeError` 三种错误口径，跨包捕获时需要用户自己判断该捕哪一种，得在包 README 里显式声明这层语义差异 |
 | ③ 提升为独立小模块 | 把 `AquaMindError` + `AdapterError` 一并移入 `aquamind_sse/errors.py` | 低——纯物理移动，两条防泄露属性跟着走，不存在漏抄 |
 
