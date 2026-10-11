@@ -224,14 +224,10 @@ __marimo__/
 # 私有工作文件（不进版本库）
 docs/private/
 
-.env
 .aquamind_cache/
-coverage.xml
 site/
 .workbuddy/
-dist/
-build/
-*.egg-info/
+# 注：.env / coverage.xml / dist/ / build/ / *.egg-info/ 已在文件前部通用规则中声明，此处不再重复。
 
 # ---- Day11 仓库卫生（2026-10-08）----
 # 内部逐日执行计划私有化（docs/private/ 规则已存在于上方）
