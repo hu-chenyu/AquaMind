@@ -685,7 +685,8 @@ class TestPlayTimed:
     覆盖三件事：按录下时刻调度（首片立即、后续按间隔 sleep）、倍率的折算方向
     （>1 加速、<1 减速）、以及无时序时退化为瞬时回放。另有时序偏差测量与
     指纹校验的等价性。倍率相关断言全部走「sleep 参数」与「计划到达时刻」两条
-    确定性口径，不依赖墙钟。
+    口径——计划时刻是纯算术、可精确断言；sleep 参数由真实时钟差额决定，容差
+    取 5ms 吸收偶发 OS 调度抖动（1ms 曾在 7 轮全量中被抓到过一次失败）。
     """
 
     def test_chunks_arrive_in_recorded_order(self, tmp_path: Path) -> None:
@@ -711,8 +712,9 @@ class TestPlayTimed:
         expected = [arrival / 1000 for arrival in _STREAM_ARRIVALS_MS[1:]]
         # 首片 arrival_ms=0 → 不产生 sleep 调用，故调用次数 = chunk 数 - 1
         assert len(sleep_calls) == len(_STREAM_CHUNKS) - 1
-        # 1ms 容差吸收真实时钟在多次迭代间的推进（量级为微秒）
-        assert sleep_calls == pytest.approx(expected, abs=1e-3)
+        # 5ms 容差吸收真实时钟推进与偶发 OS 调度抖动（实测出现过 1.87ms 尖峰，
+        # 1ms 容差下 7 轮全量曾抓到 1 次失败；5ms 仍远小于最小断言间隔）
+        assert sleep_calls == pytest.approx(expected, abs=5e-3)
 
     def test_speed_2_halves_intervals(self, tmp_path: Path, sleep_calls) -> None:
         """speed=2（加速）：每片睡到提前一半的计划时刻。
@@ -724,7 +726,7 @@ class TestPlayTimed:
         stream = play_timed(cassette, speed=2.0)
         list(stream)
         expected = [arrival / 1000 / 2.0 for arrival in _FAST_ARRIVALS_MS[1:]]
-        assert sleep_calls == pytest.approx(expected, abs=1e-3)
+        assert sleep_calls == pytest.approx(expected, abs=5e-3)
         # 计划到达时刻是纯算术，可精确断言：它证明折算方向没错（加速=更早）
         assert list(stream.deviation.expected_ms) == [
             arrival / 2.0 for arrival in _FAST_ARRIVALS_MS
@@ -738,7 +740,7 @@ class TestPlayTimed:
         stream = play_timed(cassette, speed=0.5)
         list(stream)
         expected = [arrival / 1000 / 0.5 for arrival in _FAST_ARRIVALS_MS[1:]]
-        assert sleep_calls == pytest.approx(expected, abs=1e-3)
+        assert sleep_calls == pytest.approx(expected, abs=5e-3)
         # 减速=更晚：若误写成乘 speed，这组断言会立刻失败
         assert list(stream.deviation.expected_ms) == [
             arrival / 0.5 for arrival in _FAST_ARRIVALS_MS
@@ -1448,6 +1450,67 @@ class TestCassetteRedaction:
         assert stored["pwd"] == "REDACTED"
         assert stored["bearer"] == "REDACTED"
         assert stored["ok"] is True
+
+    def test_scan_script_detects_akia_prefix(self, tmp_path: Path) -> None:
+        """AKIA 前缀钉板（热修①新增 8 条正则的锚点之一）：藏于非敏感字段也必被检出。
+
+        密钥用运行时拼接，源码中不出现连续形态（避免被仓库密钥扫描误判）；
+        note 不是敏感字段名，命中必须来自 AKIA 前缀规则——正则写错（如量词
+        变动）这条必红。
+        """
+        leaked_key = "AKIA" + "IOSFODNN7EXAMPLE"
+        leaked_dir = tmp_path / "akia"
+        leaked_dir.mkdir()
+        payload = {"request_body": json.dumps({"note": f"aws {leaked_key}", "model": "gpt-4"})}
+        (leaked_dir / "deadbeef00000002.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+
+        result = _run_scan_script(leaked_dir)
+        assert result.returncode == 1
+        assert "AKIA 前缀" in result.stdout
+        assert leaked_key not in result.stdout
+
+    def test_scan_script_detects_pem_private_key(self, tmp_path: Path) -> None:
+        """PEM 私钥块头钉板（热修①新增 8 条正则的锚点之二）：块头形态必被检出。
+
+        夹具只含 PEM 块头行（公开格式，不含任何真实私钥内容）；藏于纯文本
+        载荷中、字段规则覆盖不到，命中必须来自 PEM 前缀规则。
+        """
+        pem_header = "-----BEGIN RSA PRIVATE KEY-----"
+        leaked_dir = tmp_path / "pem"
+        leaked_dir.mkdir()
+        payload = {"request_body": json.dumps({"note": f"leaked {pem_header}"})}
+        (leaked_dir / "deadbeef00000003.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+
+        result = _run_scan_script(leaked_dir)
+        assert result.returncode == 1
+        assert "PEM 私钥块头" in result.stdout
+
+    def test_scan_script_fail_closed_on_deeply_nested_json(self, tmp_path: Path) -> None:
+        """嵌套过深的载荷按疑似泄漏处理（fail-closed 第三条路径）。
+
+        夹具形态：深嵌套 JSON 藏在字符串值里（'{"a":' × 3000）——顶层解析成功、
+        进入 _walk 后在「字符串内嵌 JSON」分支触发 RecursionError，被 _scan_file
+        的兜底捕获，给出干净的「结构嵌套过深」发现而不是静默跳过。（实测探针：
+        顶层即深嵌套的形态同样 fail-closed，但走未捕获 RecursionError → 非零
+        退出码的路径；本用例固定在能验证**设计路径**的夹具上。）
+        """
+        depth = 3000
+        deep_json = '{"a":' * depth + "1" + "}" * depth
+        nested_dir = tmp_path / "deep"
+        nested_dir.mkdir()
+        payload = {"request_body": deep_json}
+        (nested_dir / "deadbeef00000004.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+
+        result = _run_scan_script(nested_dir)
+        # fail-closed：非零退出码（不得静默跳过），且报出「结构嵌套过深」发现
+        assert result.returncode != 0
+        assert "结构嵌套过深" in result.stdout
 
 
 def cassette_header(path: Path, name: str) -> str:

@@ -37,8 +37,9 @@
 
 ### 决策三：匹配用「包含」的子串规则，取保守取向
 
-键名（大小写不敏感）包含 `key` / `token` / `password` / `secret` / `authorization` /
-`auth` / `credential` / `cookie` / `session` / `private` 任一子串即命中，值被替换。
+键名（大小写不敏感）包含 `key` / `token` / `password` / `secret` / `api_key` /
+`apikey` / `authorization` / `auth` / `credential` / `cookie` / `session` /
+`private` / `jwt` / `passwd` / `pwd` / `bearer` 任一子串即命中，值被替换。
 
 精确等于无法穷举命名变体（`api_key` / `apikey` / `secret_key` / `access_token` /
 `refresh_token` / `x-auth-token` / `session_id` / `private_key`……），子串匹配让新变体
@@ -137,6 +138,13 @@ D16 演示采样或后续真实录制中出现非 JSON 载荷的密钥泄漏案�
 对其修复方式是**重新录制**而不是手改文件（手改会破坏指纹一致性）。扫描脚本对不可读、
 不可解析、嵌套过深的文件一律按疑似泄漏处理（fail-closed）——扫描器的沉默必须意味着
 "确实检查过了且没有"，而不是"打开失败被跳过"。
+
+**边界五：跨 chunk 切断的密钥不在 timing 正则兜底覆盖内（D15 复核补强②）。** timing
+文本的兜底脱敏逐 chunk 独立做正则匹配：一个密钥被流式切成两个 chunk（前一片尾部 +
+后一片头部）时，两侧都不构成完整形态，明文碎片可能落盘。概率低（流式内容含凭据已
+罕见，恰好切断更罕见），但属已知残余路径——扫描脚本（按 JSON 结构遍历）同样无法跨
+chunk 拼接检出。**触发复审的条件**：M3 起若流式录制成为主流路径，应评估「跨 chunk
+拼接后再脱敏」的方案（新开 ADR；窗口缓冲会改变流式产出时点，须整体评审）。
 
 **复审时点**：D16 演示采样（cassette 进 `examples/`）之后复核一次，重点确认真实采样
 链路上四个通道（请求头 / 请求体 / 响应头 / 响应体）的脱敏与扫描全部按本 ADR 执行，
