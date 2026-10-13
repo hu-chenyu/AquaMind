@@ -31,6 +31,11 @@
   版本字段——回放时重算的 hash 与 cassette 中记录的不一致，就说明请求已变更
   （改了模型名、改了 body、换了密钥……），必须重新录制，否则回放出来的将是
   一个与当前请求无关的响应。
+
+  脱敏分两层（M1-D15 收口）：请求头敏感值（authorization/x-api-key）以
+  ``sha256:`` 短摘要落盘——它参与指纹，必须保留「换了密钥即换指纹」的区分度；
+  请求体 / 响应头 / 响应体的敏感字段落盘为 ``"REDACTED"``——这三处不参与
+  指纹，不需要区分度。脱敏在 ``record()`` 边界强制执行，不提供关闭开关。
 """
 
 from __future__ import annotations
@@ -62,6 +67,30 @@ _KEY_HEADERS: frozenset[str] = frozenset({"content-type", "accept"})
 _SENSITIVE_HEADERS: frozenset[str] = frozenset({"authorization", "x-api-key"})
 # 敏感请求头落盘时的占位前缀，便于人工辨认「这里是摘要不是真值」
 _MASK_PREFIX = "sha256:"
+# 敏感字段模式（M1-D15）：字段名（大小写不敏感）**包含**任一子串即视为敏感。
+# 用「包含」而非「精确等于」：真实载荷里的命名形态不可穷举（api_key / apikey /
+# secret_key / access_token / refresh_token / x-auth-token / session_id /
+# private_key……），子串匹配让新变体自动被覆盖。代价是 max_tokens /
+# prompt_tokens 这类「词里恰好含 token」的非凭据字段也会被一并脱敏——这是刻意
+# 选择的保守取向：宁可多脱敏，不可漏脱敏（取舍记录见 docs/adr/0011）。
+# 注："api_key" / "apikey" 已被 "key" 覆盖，显式列出是为与设计清单逐字对应。
+_SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
+  "key",
+  "token",
+  "password",
+  "secret",
+  "api_key",
+  "apikey",
+  "authorization",
+  "auth",
+  "credential",
+  "cookie",
+  "session",
+  "private",
+)
+# 敏感字段值的落盘占位符。与请求头的 sha256: 摘要分工：请求头参与指纹、需要
+# 保留区分度；请求体 / 响应头 / 响应体不参与指纹，直接替换即可
+_REDACTED_PLACEHOLDER = "REDACTED"
 # cassette 文件扩展名
 _CASSETTE_SUFFIX = ".json"
 # arrival_ms 保留的小数位：毫秒级留 3 位即微秒精度，既足以表达 chunk 之间的
@@ -530,6 +559,18 @@ def record(
   ``timing``。本函数**只录不播**：``timing`` 被完整落盘并可回放读取，但
   ``play()`` 仍一次性返回完整响应（时序调度留给 M1-D06c）。
 
+  录制期脱敏（M1-D15）是本边界的**强制行为**，不提供关闭开关：请求头敏感值
+  以 ``sha256:`` 短摘要落盘（D6a 既有口径，参与指纹，见
+  :func:`_canonical_headers`）；请求体、响应头、响应体中键名命中敏感模式
+  （大小写不敏感的子串匹配，见 ``_SENSITIVE_KEY_PATTERNS``）的字段值一律替换
+  为 ``"REDACTED"``。脱敏只影响落盘内容、**不影响指纹**——``request_hash``
+  始终用原始请求体计算（换了密钥的请求必须得到不同指纹，否则会回放出旧凭据
+  下录的内容），而落盘文件不得含密钥。
+
+  脱敏边界：仅 JSON 对象/数组载荷做结构化脱敏，非 JSON 文本或顶层非对象/
+  数组的 JSON 原样落盘（调用方需自行确保这类载荷不含密钥）；未命中敏感字段
+  的载荷逐字保留，不做无谓的重序列化（细则见 :func:`_redact_json_text`）。
+
   Args:
     request_info: 请求信息，其指纹由 :meth:`Cassette.compute_request_hash` 决定。
     response_info: 响应信息，bytes 响应体在边界按 UTF-8 解码为文本。
@@ -555,10 +596,15 @@ def record(
     request_method=request_info.method.strip().upper(),
     request_url=request_info.url,
     request_headers=_canonical_headers(request_info.headers),
-    request_body=request_info.body,
+    # 请求体脱敏：None 保持 None（「没有请求体」不因脱敏变成空串）；
+    # 脱敏只影响落盘副本，request_hash 仍用原始请求体计算
+    request_body=(
+      None if request_info.body is None else _redact_json_text(request_info.body)
+    ),
     response_status_code=response_info.status_code,
-    response_headers=dict(response_info.headers),
-    response_body=_normalize_response_body(response_info.body),
+    # 响应头脱敏：set-cookie / authorization / x-auth-token 等键名命中即替换
+    response_headers=_redact_sensitive_fields(dict(response_info.headers)),
+    response_body=_redact_json_text(_normalize_response_body(response_info.body)),
     request_hash=Cassette.compute_request_hash(request_info),
     recorded_at=datetime.now(UTC).isoformat(),
     format_version=CURRENT_FORMAT_VERSION,
@@ -901,6 +947,92 @@ def _canonical_headers(headers: dict[str, str]) -> dict[str, str]:
     elif key in _KEY_HEADERS:
       canonical[key] = value
   return canonical
+
+
+def _is_sensitive_field(name: str) -> bool:
+  """判断字段名是否命中敏感字段模式（大小写不敏感，子串匹配）。
+
+  Args:
+    name: 待判断的字段名（JSON 键名或 HTTP 头名）。
+
+  Returns:
+    bool: 命中 ``_SENSITIVE_KEY_PATTERNS`` 任一子串时为 True。
+
+  匹配规则为「包含」而非「精确等于」：真实载荷里的命名形态不可穷举
+  （``api_key`` / ``secret_key`` / ``access_token`` / ``x-auth-token`` /
+  ``session_id``……），子串匹配让新变体自动被覆盖。代价是 ``max_tokens``
+  这类「词里恰好含 token」的非凭据字段也会命中——这是刻意选择的保守取向，
+  宁可多脱敏，不可漏脱敏（取舍记录见 ``docs/adr/0011``）。
+  """
+  lowered = name.lower()
+  return any(pattern in lowered for pattern in _SENSITIVE_KEY_PATTERNS)
+
+
+def _redact_sensitive_fields(data: Any) -> Any:
+  """递归脱敏：命中敏感模式的字段值替换为 ``"REDACTED"``。
+
+  遍历所有嵌套层级：dict 的每个键值对、list 的每个元素都会深入；键名命中
+  敏感模式时（见 :func:`_is_sensitive_field`），无论值是什么类型，整个值都被
+  替换为 ``"REDACTED"`` 字符串（保留字段名，只替换值）。返回全新结构，不就地
+  改写入参（调用方的 RequestInfo/ResponseInfo 保持原样——指纹计算依赖它）。
+
+  边界：本函数只做**结构化**脱敏，作用对象是已解析的 JSON 树。字符串内部
+  再嵌着一段 JSON 文本的场景（如 ``{"content": "{\\"api_key\\": \\"...\\"}"}``）不会被
+  继续解析——M1 阶段只保证 JSON 载荷里嵌套对象/数组的脱敏，字符串内部再嵌
+  JSON 的情况由调用方自行注意（取舍记录见 ``docs/adr/0011``）。
+
+  Args:
+    data: 任意 Python 对象（dict/list/str/数值/None 等）。
+
+  Returns:
+    Any: 脱敏后的新对象；非 dict/list 的值原样返回。
+  """
+  if isinstance(data, dict):
+    return {
+      key: (
+        _REDACTED_PLACEHOLDER
+        if isinstance(key, str) and _is_sensitive_field(key)
+        else _redact_sensitive_fields(value)
+      )
+      for key, value in data.items()
+    }
+  if isinstance(data, list):
+    return [_redact_sensitive_fields(item) for item in data]
+  return data
+
+
+def _redact_json_text(text: str) -> str:
+  """对 JSON 文本载荷做结构化脱敏，不可结构化时原样返回。
+
+  处理流程：``json.loads`` 解析 → 顶层是对象/数组则递归脱敏
+  （:func:`_redact_sensitive_fields`）→ 确有字段被替换时用
+  ``json.dumps(sort_keys=True, ensure_ascii=False)`` 序列化回字符串。
+
+  两处刻意设计：
+
+  1. **只在确有改动时回写**：未命中任何敏感字段的载荷逐字保留原文
+    （键序、空白、数字写法都不动），避免无谓地改写录制原文——cassette 是
+    证据文件，「没被动过」本身就是一个可核对的信号。
+  2. **不可结构化的载荷不猜**：非 JSON 文本（纯文本、XML 等）或顶层不是
+    对象/数组的合法 JSON（如裸字符串、裸数字）原样返回。M1 阶段只保证
+    JSON 对象/数组载荷的脱敏，这类文本由调用方自行确保不含密钥。
+
+  Args:
+    text: 载荷原文（请求体，或已归一为文本的响应体）。
+
+  Returns:
+    str: 脱敏后的文本；不可结构化或未命中敏感字段时逐字返回原文。
+  """
+  try:
+    parsed: Any = json.loads(text)
+  except json.JSONDecodeError:
+    return text
+  if not isinstance(parsed, (dict, list)):
+    return text
+  redacted = _redact_sensitive_fields(parsed)
+  if redacted == parsed:
+    return text
+  return json.dumps(redacted, ensure_ascii=False, sort_keys=True)
 
 
 def _normalize_response_body(body: str | bytes | None) -> str:

@@ -4,15 +4,21 @@
 find_match 精确匹配（无匹配/损坏/指纹变更）、format_version 前向兼容闸口、
 play 还原、ReplayedResponse 读取面（text/content/json）、异常消息脱敏，
 M1-D06b 的 chunk 到达时序录制（ChunkTiming 契约、归一化、3 位小数、
-序列化往返、v1 旧 cassette 兼容），以及 M1-D06c 的时序调度回放（倍率缩放、
-瞬时回放兼容、时序偏差测量、指纹校验在时序回放中仍然生效）。
+序列化往返、v1 旧 cassette 兼容），M1-D06c 的时序调度回放（倍率缩放、
+瞬时回放兼容、时序偏差测量、指纹校验在时序回放中仍然生效），以及 M1-D15
+的录制期脱敏（请求体/响应头/响应体敏感字段 REDACTED、密钥零泄漏、cassette
+扫描脚本正反两例）。
 
-所有用例只用 tmp_path 构造临时 cassette 目录，不触达任何真实 API（CI 零 key）。
+所有用例只用 tmp_path 构造临时 cassette 目录，不触达任何真实 API（CI 零 key）；
+扫描脚本用例以子进程运行本地脚本，同样零网络、零真实密钥。
 """
 
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -1067,6 +1073,222 @@ class TestErrorRedaction:
 
     with pytest.raises(AquaMindError):
       replay_request(_make_request(), tmp_path)
+
+
+# ── M1-D15 录制期脱敏 ────────────────────────────────────────────────
+
+# 脱敏测试用的假 API key：源码里以「sk-」+ 长串**两段拼接**构造，文件中不出现
+# 「sk- 紧跟 16 位以上随机串」的连续字面量——否则 tests/ 会被仓库自带的密钥扫描
+# （pre_release_scan.py 的 sk-{20,} 规则与验收口令的 sk-{16,} 规则）判为疑似明文
+# 凭据。运行时的拼接结果与真实密钥同形态，使「零泄漏」断言具备真实分量。
+_FAKE_API_KEY = "sk-" + "abc123def456ghi789jkl012mno345pqr678"
+# 响应体测试用的假 token（JWT 形态占位，无 sk-/pypi- 等前缀，不命中密钥扫描）
+_FAKE_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake-signature"
+# cassette 专用扫描脚本路径：以测试文件位置反推仓库根，不依赖运行目录
+_SCAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "scan_cassette_secrets.py"
+
+
+def _run_scan_script(target: Path) -> subprocess.CompletedProcess[str]:
+  """以子进程运行 cassette 扫描脚本（真实 CLI 口径，含退出码）。
+
+  Args:
+    target: 传给 ``--dir`` 的扫描目录。
+
+  Returns:
+    subprocess.CompletedProcess[str]: 含 returncode/stdout/stderr 的进程结果。
+  """
+  # PYTHONIOENCODING 把子进程输出固定为 UTF-8：Windows 管道默认走本地代码页
+  # （cp936），与父进程按 UTF-8 解码的约定不一致会直接炸在解码步骤上
+  env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+  return subprocess.run(
+    [sys.executable, str(_SCAN_SCRIPT_PATH), "--dir", str(target)],
+    capture_output=True,
+    text=True,
+    encoding="utf-8",
+    env=env,
+    check=False,
+  )
+
+
+class TestCassetteRedaction:
+  """录制期脱敏测试（M1-D15）：敏感字段落盘 REDACTED，密钥零泄漏。
+
+  覆盖三层证据：命中敏感字段的载荷在落盘前被替换且明文不出现在文件任何位置；
+  非敏感字段逐字保留（未命中不做无谓重序列化）；指纹用原始请求体计算（脱敏
+  不影响「换密钥 → 换指纹」的区分度）。另含扫描脚本正反两例：含明文密钥的
+  cassette 被检出（退出码 1，且不回显密钥值），已脱敏 cassette 报通过（退出码 0）。
+  """
+
+  def test_request_body_api_key_redacted(self, tmp_path: Path) -> None:
+    """请求体命中 api_key：明文不落盘，字段值替换为 REDACTED。"""
+    original_body = json.dumps(
+      {"model": "gpt-4", "api_key": _FAKE_API_KEY, "temperature": 0.7}
+    )
+    request = _make_request(body=original_body)
+    path = Path(record(request, _make_response(), tmp_path))
+
+    content = path.read_text(encoding="utf-8")
+    # 明文密钥不得出现在落盘文件的任何位置（含 JSON 字符串内的转义形态）
+    assert _FAKE_API_KEY not in content
+    stored_body = json.loads(json.loads(content)["request_body"])
+    assert stored_body["api_key"] == "REDACTED"
+    # 脱敏不就地改写调用方的请求对象（指纹计算依赖它保持原始值）
+    assert request.body == original_body
+
+  def test_response_body_token_redacted(self, tmp_path: Path) -> None:
+    """响应体命中 access_token：明文 token 不落盘，字段值替换为 REDACTED。"""
+    response = _make_response(
+      body=json.dumps({"access_token": _FAKE_ACCESS_TOKEN, "object": "chat.completion"})
+    )
+    path = Path(record(_make_request(), response, tmp_path))
+
+    content = path.read_text(encoding="utf-8")
+    assert _FAKE_ACCESS_TOKEN not in content
+    stored_body = json.loads(json.loads(content)["response_body"])
+    assert stored_body["access_token"] == "REDACTED"
+    # 同层非敏感字段随重序列化保留原值
+    assert stored_body["object"] == "chat.completion"
+
+  def test_response_header_cookie_redacted(self, tmp_path: Path) -> None:
+    """响应头命中 Set-Cookie：明文 cookie 不落盘，头值替换为 REDACTED。"""
+    response = ResponseInfo(
+      status_code=200,
+      headers={
+        "Content-Type": "application/json",
+        "Set-Cookie": "session=abc123; HttpOnly",
+      },
+      body='{"ok": true}',
+    )
+    path = Path(record(_make_request(), response, tmp_path))
+
+    content = path.read_text(encoding="utf-8")
+    assert "session=abc123" not in content
+    headers = json.loads(content)["response_headers"]
+    assert headers["Set-Cookie"] == "REDACTED"
+    # 非敏感响应头不受影响
+    assert headers["Content-Type"] == "application/json"
+
+  def test_non_sensitive_fields_preserved(self, tmp_path: Path) -> None:
+    """非敏感字段逐字保留：未命中敏感模式的载荷不做无谓重序列化。"""
+    body = json.dumps(
+      {
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "hello"}],
+        "temperature": 0.7,
+      }
+    )
+    path = Path(record(_make_request(body=body), _make_response(), tmp_path))
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    # 两个载荷都无敏感字段 → 与录制原文逐字一致（键序、空白都不动）
+    assert payload["request_body"] == body
+    assert payload["response_body"] == '{"id": "chatcmpl-1", "choices": []}'
+
+  def test_nested_sensitive_field_redacted(self, tmp_path: Path) -> None:
+    """嵌套结构递归脱敏：内层 api_key 被替换，同级非敏感字段保留。"""
+    body = json.dumps(
+      {"data": {"user": {"api_key": "sk-test123", "name": "alice"}}, "ok": True}
+    )
+    path = Path(record(_make_request(body=body), _make_response(), tmp_path))
+
+    content = path.read_text(encoding="utf-8")
+    assert "sk-test123" not in content
+    stored = json.loads(json.loads(content)["request_body"])
+    assert stored["data"]["user"]["api_key"] == "REDACTED"
+    assert stored["data"]["user"]["name"] == "alice"
+    assert stored["ok"] is True
+
+  def test_non_json_body_not_redacted(self, tmp_path: Path) -> None:
+    """非 JSON 文本不做结构化脱敏（M1 已知边界）：原文原样落盘。
+
+    这是刻意的边界而非缺陷：结构化脱敏需要能定位「字段」，纯文本 / XML 没有
+    字段边界，猜着替换只会引入误伤。判定口径是「能否解析为 JSON 对象/数组」，
+    解析失败或顶层是裸字符串/裸数字的载荷都走原样保留——含密钥的非 JSON 载荷
+    由调用方自行注意（扫描脚本与 gitignore 是这段边界的兜底防线，见 ADR-0011）。
+    """
+    text_body = "this is not json with sk-secret123"
+    path = Path(
+      record(_make_request(body=text_body), _make_response(body=text_body), tmp_path)
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["request_body"] == text_body
+    assert payload["response_body"] == text_body
+
+    # 顶层不是对象/数组的合法 JSON（裸字符串 / 裸数字）同样无从结构化，原样保留
+    scalar_path = Path(
+      record(_make_request(body='"sk-scalar-123"'), _make_response(body="12345"), tmp_path)
+    )
+    scalar_payload = json.loads(scalar_path.read_text(encoding="utf-8"))
+    assert scalar_payload["request_body"] == '"sk-scalar-123"'
+    assert scalar_payload["response_body"] == "12345"
+
+  def test_fingerprint_uses_original_body(self, tmp_path: Path) -> None:
+    """指纹用原始请求体计算：脱敏不影响「换密钥 → 换指纹」的区分度。"""
+    request_a = _make_request(
+      body=json.dumps({"api_key": "sk-test-aaa", "model": "gpt-4"})
+    )
+    request_b = _make_request(
+      body=json.dumps({"api_key": "sk-test-bbb", "model": "gpt-4"})
+    )
+
+    # 仅密钥不同 → 指纹必须不同（否则会回放命中旧密钥录下的 cassette）
+    assert Cassette.compute_request_hash(request_a) != Cassette.compute_request_hash(
+      request_b
+    )
+
+    record(request_a, _make_response(), tmp_path)
+    # 落盘时密钥已脱敏，但指纹仍按原始请求体比对：b 无匹配、a 命中
+    assert find_match(request_b, tmp_path) is None
+    assert find_match(request_a, tmp_path) is not None
+
+  def test_scan_script_detects_plaintext_cassette(self, tmp_path: Path) -> None:
+    """扫描脚本对含明文密钥的 cassette 必须报警（退出码 1，证明有牙齿）。
+
+    夹具刻意模拟「未经 record() 直接落盘的旧式 cassette」：api_key 为明文长
+    密钥、Set-Cookie 未脱敏。扫描脚本应分别走前缀规则与敏感字段规则报警。
+    """
+    # 运行时长密钥（源码中无连续 16+ 位字面量，避免被仓库密钥扫描误判）
+    leaked_key = "sk-" + "proj-" + "0123456789abcdef"
+    leaked_dir = tmp_path / "leaked"
+    leaked_dir.mkdir()
+    leaked_payload = {
+      "request_method": "POST",
+      "request_url": "https://api.example.com/v1/chat/completions",
+      "request_headers": {},
+      "request_body": json.dumps({"api_key": leaked_key, "model": "gpt-4"}),
+      "response_status_code": 200,
+      "response_headers": {"Set-Cookie": "session=leaked-cookie-value"},
+      "response_body": json.dumps({"note": "no redaction applied"}),
+      "request_hash": "deadbeef00000000",
+      "recorded_at": "2026-10-13T00:00:00+00:00",
+      "format_version": 2,
+      "timing": None,
+    }
+    (leaked_dir / "deadbeef00000000.json").write_text(
+      json.dumps(leaked_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    result = _run_scan_script(leaked_dir)
+    assert result.returncode == 1
+    assert "扫描失败" in result.stdout
+    # 报告泄漏字段名（前缀规则 + 字段规则各一处），但不回显密钥值本身
+    assert "api_key" in result.stdout
+    assert "Set-Cookie" in result.stdout
+    assert leaked_key not in result.stdout
+
+  def test_scan_script_passes_redacted_cassette(self, tmp_path: Path) -> None:
+    """record() 落盘的已脱敏 cassette，扫描脚本必须报通过（退出码 0）。"""
+    request = _make_request(body=json.dumps({"api_key": _FAKE_API_KEY, "model": "gpt-4"}))
+    response = ResponseInfo(
+      status_code=200,
+      headers={"Set-Cookie": "session=abc123; HttpOnly"},
+      body=json.dumps({"access_token": _FAKE_ACCESS_TOKEN, "id": "chatcmpl-1"}),
+    )
+    record(request, response, tmp_path)
+
+    result = _run_scan_script(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "扫描通过" in result.stdout
 
 
 def cassette_header(path: Path, name: str) -> str:
