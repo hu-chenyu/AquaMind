@@ -232,6 +232,16 @@ site/
 .workbuddy/
 # 注：.env / coverage.xml / dist/ / build/ / *.egg-info/ 已在文件前部通用规则中声明，此处不再重复。
 
+# ---- D15 cassette 录制期脱敏兜底（2026-10-13）----
+#    默认 cassette 目录 .aquamind_cache/ 已在上方忽略；此处为「配置偏移」场景
+#    兜底：AQ_REPLAY_DIR 指向仓库根下的 cassettes/ 或 .aquamind/ 时同样忽略，
+#    防止含密钥的本地录制被误提交。
+#    模式一律根锚定（前导斜杠）而非全局通配：examples/ 下的演示 cassette
+#    （D16 起入库、已过录制期脱敏）不会被误伤，「本地录制」与「入库示例」
+#    用精确路径区分。
+/cassettes/
+/.aquamind/
+
 # ---- Day11 仓库卫生（2026-10-08）----
 # 内部逐日执行计划私有化（对应上方通配规则）
 
