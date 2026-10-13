@@ -15,6 +15,7 @@ M1-D06b 的 chunk 到达时序录制（ChunkTiming 契约、归一化、3 位小
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import subprocess
@@ -1289,6 +1290,164 @@ class TestCassetteRedaction:
         result = _run_scan_script(tmp_path)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "扫描通过" in result.stdout
+
+    def test_scan_script_detects_key_in_non_sensitive_field(self, tmp_path: Path) -> None:
+        """前缀规则独立检出：密钥藏在非敏感字段值中，字段规则覆盖不到。
+
+        与 test_scan_script_detects_plaintext_cassette 互补：那条用例里字段规则
+        会同时命中（遮蔽前缀规则），删掉 sk- 前缀正则后仍绿；本用例的 note 不是
+        敏感字段名，唯一能报的就是前缀规则——前缀规则被删，这条必红。
+        """
+        # 运行时拼接长密钥：源码中不出现连续 16+ 位字面量（同既有夹具口径）
+        leaked_key = "sk-" + "proj-" + "0123456789abcdef"
+        leaked_dir = tmp_path / "non_sensitive"
+        leaked_dir.mkdir()
+        payload = {
+            "request_body": json.dumps({"note": f"leaked {leaked_key}", "model": "gpt-4"}),
+            "response_body": "{}",
+        }
+        (leaked_dir / "cafebabe00000000.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+
+        result = _run_scan_script(leaked_dir)
+        assert result.returncode == 1
+        # 命中必须来自前缀规则（note 不是敏感字段名，字段规则覆盖不到）
+        assert "sk- 系列密钥形态" in result.stdout
+        assert leaked_key not in result.stdout
+
+    def test_list_items_sensitive_fields_redacted(self, tmp_path: Path) -> None:
+        """list 分支递归脱敏：列表内每个对象的敏感字段都替换为 REDACTED。"""
+        body = json.dumps(
+            {
+                "items": [
+                    {"api_key": "sk-test-aaa", "name": "a"},
+                    {"api_key": "sk-test-bbb", "name": "b"},
+                ]
+            }
+        )
+        path = Path(record(_make_request(body=body), _make_response(), tmp_path))
+
+        content = path.read_text(encoding="utf-8")
+        assert "sk-test-aaa" not in content
+        assert "sk-test-bbb" not in content
+        stored = json.loads(json.loads(content)["request_body"])
+        # 两个列表元素里的 api_key 都必须命中（list 分支不能整段跳过）
+        assert [item["api_key"] for item in stored["items"]] == ["REDACTED", "REDACTED"]
+        assert [item["name"] for item in stored["items"]] == ["a", "b"]
+
+    def test_max_tokens_is_redacted_by_token_substring_rule(self, tmp_path: Path) -> None:
+        """钉板：max_tokens 含 token 子串 → 按「包含」规则被 REDACTED。
+
+        这是保守取向的已知代价（ADR-0011 边界二）：宁可多脱敏，不可漏脱敏。
+        本测试把当前行为钉死——未来若改为词边界匹配，这里必须显式改断言，
+        不允许"悄悄收紧"（改口径须走 ADR 评审）。
+        """
+        body = json.dumps(
+            {
+                "model": "gpt-4",
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+        )
+        path = Path(record(_make_request(body=body), _make_response(), tmp_path))
+
+        stored = json.loads(json.loads(path.read_text(encoding="utf-8"))["request_body"])
+        assert stored["max_tokens"] == "REDACTED"
+        # 非敏感字段不受牵连
+        assert stored["model"] == "gpt-4"
+
+    def test_redaction_does_not_mutate_caller_dict(self, tmp_path: Path) -> None:
+        """非变异保证：脱敏只读入参——record() 与 _redact_sensitive_fields 都不改原对象。
+
+        指纹计算依赖调用方原始请求体；若脱敏顺手就地改写，调用方两次 record()
+        会得到不同指纹，且「录制后对象变了」极难排查。
+        """
+        from aquamind.replay import _redact_sensitive_fields
+
+        original = {"api_key": "sk-test-aaa", "profile": {"name": "alice"}, "ok": True}
+        snapshot = copy.deepcopy(original)
+        object_id = id(original)
+
+        record(_make_request(body=json.dumps(original)), _make_response(), tmp_path)
+        assert original == snapshot  # record() 全链路不改写入参
+        assert id(original) == object_id
+
+        redacted = _redact_sensitive_fields(original)
+        assert redacted == {"api_key": "REDACTED", "profile": {"name": "alice"}, "ok": True}
+        assert redacted is not original  # 返回新对象而非原地替换
+        assert original == snapshot  # 直接调用同样不改写
+
+    def test_sensitive_field_matching_is_case_insensitive(self, tmp_path: Path) -> None:
+        """键名大小写不敏感：Api_Key / API-KEY / Authorization 都应命中。"""
+        body = json.dumps(
+            {
+                "Api_Key": "sk-test-aaa",
+                "API-KEY": "sk-test-bbb",
+                "Authorization": "Bearer xxx",
+            }
+        )
+        path = Path(record(_make_request(body=body), _make_response(), tmp_path))
+
+        stored = json.loads(json.loads(path.read_text(encoding="utf-8"))["request_body"])
+        assert stored["Api_Key"] == "REDACTED"
+        assert stored["API-KEY"] == "REDACTED"
+        assert stored["Authorization"] == "REDACTED"
+
+    def test_scan_script_fail_closed_on_unreadable_or_corrupt(self, tmp_path: Path) -> None:
+        """损坏文件按疑似泄漏处理（fail-closed），不静默跳过。
+
+        扫描脚本有三条 fail-closed 路径（不可读 / JSON 解析失败 / 嵌套过深）。
+        本用例覆盖「JSON 解析失败」：坏文件必须计入发现并拉红退出码——扫描器
+        的沉默必须意味着"确实检查过且没有"，而不是"打开失败被跳过"。
+        """
+        broken_dir = tmp_path / "broken"
+        broken_dir.mkdir()
+        (broken_dir / "deadbeef00000000.json").write_text("{not-json,,,", encoding="utf-8")
+
+        result = _run_scan_script(broken_dir)
+        assert result.returncode == 1
+        assert "JSON 解析失败" in result.stdout
+
+    def test_timing_text_secrets_redacted(self, tmp_path: Path) -> None:
+        """timing 文本兜底脱敏：chunk 碎片里的密钥形态替换为 REDACTED。
+
+        chunk 是流式增量碎片（JSON 可能被切断），无法独立结构化解析，故走与
+        扫描脚本同口径的前缀正则兜底；response_body 仍走结构化脱敏。
+        """
+        leaked_key = "sk-" + "proj-" + "fedcba9876543210"
+        chunks = [
+            (0.0, '{"type": "error", "note": "无密钥片段"}'),
+            (100.0, f"midstream {leaked_key} leaked"),
+        ]
+        path = Path(record(_make_request(), _make_response(body="{}"), tmp_path, chunks=chunks))
+
+        content = path.read_text(encoding="utf-8")
+        assert leaked_key not in content
+        timing = json.loads(content)["timing"]
+        assert timing[1]["text"] == "midstream REDACTED leaked"
+        # 非密钥部分逐字保留（只替换密钥形态，不改动其余文本）
+        assert timing[0]["text"] == '{"type": "error", "note": "无密钥片段"}'
+
+    def test_extended_sensitive_patterns_redacted(self, tmp_path: Path) -> None:
+        """扩展模式（jwt / passwd / pwd / bearer）同样命中并替换为 REDACTED。"""
+        body = json.dumps(
+            {
+                "jwt": "eyJhbGciOiJIUzI1NiJ9.placeholder",
+                "passwd": "placeholder-passwd-1",
+                "pwd": "placeholder-pwd-2",
+                "bearer": "placeholder-bearer",
+                "ok": True,
+            }
+        )
+        path = Path(record(_make_request(body=body), _make_response(), tmp_path))
+
+        stored = json.loads(json.loads(path.read_text(encoding="utf-8"))["request_body"])
+        assert stored["jwt"] == "REDACTED"
+        assert stored["passwd"] == "REDACTED"
+        assert stored["pwd"] == "REDACTED"
+        assert stored["bearer"] == "REDACTED"
+        assert stored["ok"] is True
 
 
 def cassette_header(path: Path, name: str) -> str:

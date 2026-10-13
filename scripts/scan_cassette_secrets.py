@@ -36,7 +36,8 @@ from typing import Any
 
 # 敏感字段模式：与 src/aquamind/replay.py 的 _SENSITIVE_KEY_PATTERNS 同口径
 # （大小写不敏感的子串「包含」；"api_key"/"apikey" 已被 "key" 覆盖，显式列出
-# 是为与设计清单逐字对应）
+# 是为与设计清单逐字对应；D15 复核补强 P3-6 与录制侧同步追加
+# jwt/passwd/pwd/bearer）
 SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
     "key",
     "token",
@@ -50,6 +51,10 @@ SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
     "cookie",
     "session",
     "private",
+    "jwt",
+    "passwd",
+    "pwd",
+    "bearer",
 )
 # 已脱敏形态：请求体/响应头/响应体为 REDACTED 占位，请求头为 sha256: 短摘要
 REDACTED_PLACEHOLDER = "REDACTED"
@@ -70,6 +75,15 @@ PREFIX_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"github_pat_[A-Za-z0-9_]{16,}"), "github_pat_ 系列密钥形态"),
     (re.compile(r"xox[bpoas]-[A-Za-z0-9-]{16,}"), "xox 系列密钥形态（Slack）"),
     (re.compile(r"hf_[A-Za-z0-9]{16,}"), "hf_ 系列密钥形态（Hugging Face）"),
+    # —— D15 复核补强（P2-1）：常见密钥前缀补齐 ——
+    (re.compile(r"AKIA[0-9A-Z]{16}"), "AKIA 前缀（AWS Access Key ID）"),
+    (re.compile(r"AIza[0-9A-Za-z_-]{35}"), "AIza 前缀（Google API Key）"),
+    (re.compile(r"sk_live_[A-Za-z0-9_-]{16,}"), "sk_live_ 前缀（Stripe live key）"),
+    (re.compile(r"sk_test_[A-Za-z0-9_-]{16,}"), "sk_test_ 前缀（Stripe test key）"),
+    (re.compile(r"ghu_[A-Za-z0-9]{16,}"), "ghu_ 前缀（GitHub user-to-server token）"),
+    (re.compile(r"ghs_[A-Za-z0-9]{16,}"), "ghs_ 前缀（GitHub server-to-server token）"),
+    (re.compile(r"ghr_[A-Za-z0-9]{16,}"), "ghr_ 前缀（GitHub refresh token）"),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "PEM 私钥块头"),
 )
 
 
