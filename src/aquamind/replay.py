@@ -43,6 +43,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import statistics
 import time
 from collections.abc import Iterator
@@ -73,7 +74,8 @@ _MASK_PREFIX = "sha256:"
 # private_key……），子串匹配让新变体自动被覆盖。代价是 max_tokens /
 # prompt_tokens 这类「词里恰好含 token」的非凭据字段也会被一并脱敏——这是刻意
 # 选择的保守取向：宁可多脱敏，不可漏脱敏（取舍记录见 docs/adr/0011）。
-# 注："api_key" / "apikey" 已被 "key" 覆盖，显式列出是为与设计清单逐字对应。
+# 注："api_key" / "apikey" 已被 "key" 覆盖，显式列出是为与设计清单逐字对应；
+# D15 复核补强（P3-6）追加 jwt / passwd / pwd / bearer 四个凭据相关短模式。
 _SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
   "key",
   "token",
@@ -87,10 +89,38 @@ _SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
   "cookie",
   "session",
   "private",
+  "jwt",
+  "passwd",
+  "pwd",
+  "bearer",
 )
 # 敏感字段值的落盘占位符。与请求头的 sha256: 摘要分工：请求头参与指纹、需要
 # 保留区分度；请求体 / 响应头 / 响应体不参与指纹，直接替换即可
 _REDACTED_PLACEHOLDER = "REDACTED"
+# 高熵密钥前缀形态（D15 复核补强 P2-2，与 scripts/scan_cassette_secrets.py 的
+# PREFIX_RULES 同口径）：用于 timing chunk 文本的正则兜底替换。chunk 是流式
+# 增量碎片（JSON 可能被切断），无法独立做结构化脱敏，只能在自由文本上做
+# 「密钥形态 → REDACTED」的替换
+_SECRET_PREFIX_PATTERNS: tuple[str, ...] = (
+  r"sk-[A-Za-z0-9_-]{16,}",
+  r"pypi-[A-Za-z0-9_-]{16,}",
+  r"glpat-[A-Za-z0-9_-]{16,}",
+  r"ghp_[A-Za-z0-9]{16,}",
+  r"gho_[A-Za-z0-9]{16,}",
+  r"github_pat_[A-Za-z0-9_]{16,}",
+  r"xox[bpoas]-[A-Za-z0-9-]{16,}",
+  r"hf_[A-Za-z0-9]{16,}",
+  r"AKIA[0-9A-Z]{16}",
+  r"AIza[0-9A-Za-z_-]{35}",
+  r"sk_live_[A-Za-z0-9_-]{16,}",
+  r"sk_test_[A-Za-z0-9_-]{16,}",
+  r"ghu_[A-Za-z0-9]{16,}",
+  r"ghs_[A-Za-z0-9]{16,}",
+  r"ghr_[A-Za-z0-9]{16,}",
+  r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+)
+# 联合编译：一次匹配任一密钥形态（各分支互不重叠，顺序无关）
+_TIMING_REDACT_PATTERN: re.Pattern[str] = re.compile("|".join(_SECRET_PREFIX_PATTERNS))
 # cassette 文件扩展名
 _CASSETTE_SUFFIX = ".json"
 # arrival_ms 保留的小数位：毫秒级留 3 位即微秒精度，既足以表达 chunk 之间的
@@ -570,6 +600,8 @@ def record(
   脱敏边界：仅 JSON 对象/数组载荷做结构化脱敏，非 JSON 文本或顶层非对象/
   数组的 JSON 原样落盘（调用方需自行确保这类载荷不含密钥）；未命中敏感字段
   的载荷逐字保留，不做无谓的重序列化（细则见 :func:`_redact_json_text`）。
+  流式 ``chunks`` 的文本无法结构化解析，另走密钥形态正则兜底
+  （见 :func:`_build_timing`）。
 
   Args:
     request_info: 请求信息，其指纹由 :meth:`Cassette.compute_request_hash` 决定。
@@ -1076,6 +1108,13 @@ def _build_timing(chunks: list[tuple[float, str]]) -> list[ChunkTiming]:
     贸然排序会掩盖真实的乱序到达。允许 ``arrival_ms`` 为负，它表达的是
     「该 chunk 比第一个 chunk 还早到达」这一可观测事实。
 
+  另有一条**兜底脱敏**约定：``text`` 落盘前会做密钥形态的正则替换
+  （:data:`_TIMING_REDACT_PATTERN`，与 ``scripts/scan_cassette_secrets.py``
+  的前缀规则同口径）。chunk 是流式增量碎片，JSON 可能被切断，无法独立做
+  结构化脱敏（``_redact_sensitive_fields`` 用不上），只能在自由文本上替换
+  密钥形态——与 ``response_body`` 的结构化脱敏口径不同，但目标一致：落盘
+  文件里不出现明文密钥；密钥以外的文本逐字保留。
+
   Args:
     chunks: 流式响应的 chunk 列表，每个元素为 (到达时刻毫秒, 文本)；
       可为空列表（流式响应但未采集到 chunk）。
@@ -1088,7 +1127,8 @@ def _build_timing(chunks: list[tuple[float, str]]) -> list[ChunkTiming]:
     ChunkTiming(
       index=index,
       arrival_ms=round(arrival - first_arrival, _ARRIVAL_PRECISION),
-      text=text,
+      # 兜底脱敏：只替换密钥形态，其余文本逐字保留（见 docstring）
+      text=_TIMING_REDACT_PATTERN.sub(_REDACTED_PLACEHOLDER, text),
     )
     for index, (arrival, text) in enumerate(chunks)
   ]
