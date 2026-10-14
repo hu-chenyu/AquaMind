@@ -1,0 +1,18 @@
+{
+ "request_method": "POST",
+ "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+ "request_headers": {
+  "content-type": "application/json",
+  "authorization": "sha256:e9d13b66d7bb7e7e"
+ },
+ "request_body": "{\"messages\": [{\"content\": \"请用一句话介绍你自己\", \"role\": \"user\"}], \"model\": \"demo-model\", \"temperature\": 0.7}",
+ "response_status_code": 200,
+ "response_headers": {
+  "Content-Type": "application/json"
+ },
+ "response_body": "{\"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"message\": {\"content\": \"我是 AquaMind 演示采样里的离线响应。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\", \"usage\": {\"completion_tokens\": \"REDACTED\", \"prompt_tokens\": \"REDACTED\", \"total_tokens\": \"REDACTED\"}}",
+ "request_hash": "a467e14649e0c0b5",
+ "recorded_at": "2026-10-14T01:21:04.257485+00:00",
+ "format_version": 2,
+ "timing": null
+}

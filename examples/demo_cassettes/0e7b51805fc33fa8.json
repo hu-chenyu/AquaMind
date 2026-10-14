@@ -1,0 +1,17 @@
+{
+ "request_method": "POST",
+ "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+ "request_headers": {
+  "content-type": "application/json"
+ },
+ "request_body": "{\"messages\": [{\"content\": \"服务端错误场景的演示请求\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
+ "response_status_code": 500,
+ "response_headers": {
+  "Content-Type": "application/json"
+ },
+ "response_body": "{\"error\": {\"code\": \"internal_error\", \"message\": \"Internal server error (demo)\", \"type\": \"server_error\"}}",
+ "request_hash": "0e7b51805fc33fa8",
+ "recorded_at": "2026-10-14T01:21:04.266534+00:00",
+ "format_version": 2,
+ "timing": null
+}
