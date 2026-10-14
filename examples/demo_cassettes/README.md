@@ -61,7 +61,8 @@ from aquamind.replay import Cassette, play
 cassette = Cassette.model_validate_json(
     Path("examples/demo_cassettes/11342c726590f01c.json").read_text(encoding="utf-8")
 )
-print(play(cassette).status_code, play(cassette).text)
+response = play(cassette)
+print(response.status_code, response.text)
 print(cassette.timing)  # 流式场景的 chunk 到达时序；非流式场景为 None
 ```
 
@@ -84,8 +85,9 @@ print(cassette.timing)  # 流式场景的 chunk 到达时序；非流式场景�
    但「宁可多脱敏，不可漏脱敏」是刻意选择的取向（取舍见 `docs/adr/0011-cassette-redaction.md`）。
 4. **超时用 504 形态表示**。客户端侧真实超时（`httpx.TimeoutException`）根本没有 HTTP
    响应，而 cassette 契约要求响应状态码，因此 `1e3bacfbe1e2f463.json` 取网关超时形态：
-   `504` + 空响应体 + `X-AquaMind-Demo-Failure-Mode: timeout` 标记头。标记头只标识形态，
-   不改回放语义（回放仍原样返回 504 与空体）。
+   `504` + 空响应体 + `X-AquaMind-Demo-Failure-Mode: timeout` 标记头。该场景**不设
+   `Content-Type`**：空体没有可声明的媒体类型，真实网关的 504 空体通常也不带 JSON 类型头。
+   标记头只标识形态，不改回放语义（回放仍原样返回 504 与空体）。
 5. **流式分片是内容增量，不是 SSE 帧**。`timing` 里的 `text` 是该 chunk 的增量文本，
    各片拼接后等于响应体里对应字段的值（`stream_basic` 是 `content`，`stream_tool_call`
    是 `tool_calls[0].function.arguments`）。适配器层面的 SSE 帧切分（`data:` 行解析）

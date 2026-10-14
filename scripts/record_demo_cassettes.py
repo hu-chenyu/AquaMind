@@ -497,6 +497,10 @@ def _scenario_timeout() -> DemoScenario:
     而 cassette 契约要求响应状态码，故取网关超时形态（504、空响应体、标记头）作为
     「可落盘的等价表示」。标记头只标识形态，不改回放语义。
 
+    响应头**不设 Content-Type**（D16-fix 复核修正）：空响应体没有可声明的媒体类型，
+    真实网关的 504 空体通常也不带 JSON 类型头——留一个 ``application/json`` 会让
+    「有类型头 ⇒ 体里有 JSON」这条读者默认的对应关系在这个文件上落空。
+
     Returns:
         DemoScenario: 该场景的完整定义。
     """
@@ -513,10 +517,8 @@ def _scenario_timeout() -> DemoScenario:
     )
     response = ResponseInfo(
         status_code=504,
-        headers={
-            "Content-Type": _CONTENT_TYPE_JSON,
-            "X-AquaMind-Demo-Failure-Mode": "timeout",
-        },
+        # 只有形态标记头：空体不声明 Content-Type（见 docstring 口径说明）
+        headers={"X-AquaMind-Demo-Failure-Mode": "timeout"},
         body="",
     )
     return DemoScenario(
