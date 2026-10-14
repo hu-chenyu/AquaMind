@@ -33,7 +33,7 @@ def load_cases(path: str | Path) -> list[TestCase]:
 
     Raises:
         LoaderError: 扩展名不支持、文件不存在、不可读、路径是目录、编码不是 UTF-8、
-            解析失败或文件为空时抛出。
+            解析失败、文件为空，或其他读取失败（如父路径不是目录、路径过长）时抛出。
         ValidationError: 用例字段不符合 TestCase 契约时由 pydantic 抛出，本函数不捕获。
     """
     file_path = Path(path)
@@ -70,6 +70,13 @@ def load_cases(path: str | Path) -> list[TestCase]:
         # _report_error 统一填充 file/line/msg，编码信息在此补充
         encoding_error.context["encoding"] = "utf-8"
         raise encoding_error from e
+    except OSError as e:
+        # 其余 OSError 家族（父路径不是目录的 NotADirectoryError、路径过长、符号链接
+        # 成环等；Windows 下多数会归一为 FileNotFoundError，类 Unix 下不会）不属于
+        # 上面三类具体场景，但根因同为「这个文件读不到」。不兜住它们会让裸 OSError
+        # 击穿「调用方只需 except LoaderError」的契约——replay._load_cassette 用的是
+        # 同口径的宽捕获，两处保持一致
+        raise _report_error(file_str, None, f"文件读取失败: {file_str}") from e
 
     if suffix in _YAML_SUFFIXES:
         raw_items = _parse_yaml(content, file_str)

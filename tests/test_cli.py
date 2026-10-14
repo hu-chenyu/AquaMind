@@ -772,6 +772,15 @@ class TestParseSseEvents:
         """retry 非数字时忽略该行，不影响已解析的有效值。"""
         assert parse_sse_events("data: x\nretry: soon\n\n")[0].retry is None
 
+    def test_invalid_retry_keeps_previous_valid_value(self) -> None:
+        """retry 的无效值只忽略该字段，不得抹掉先前已解析的有效值（D17 P2-2 回归）。"""
+        # 负数与非数字都按「忽略此字段」处理：修复前负数分支会把 3000 改写成 None，
+        # 使 retry 成为唯一不遵守「后出现的值覆盖先出现的值」这一字段通则的字段
+        negative = parse_sse_events("retry: 3000\nretry: -5\ndata: x\n\n")[0]
+        non_numeric = parse_sse_events("retry: 3000\nretry: soon\ndata: x\n\n")[0]
+        assert negative.retry == 3000
+        assert non_numeric.retry == 3000
+
     def test_data_without_any_field_yields_no_payload(self) -> None:
         """空 data 行产出空串而非 None，便于调用方区分“有 data 但为空”。"""
         assert parse_sse_events("data:\n\n")[0].data == ""
@@ -808,11 +817,49 @@ class TestSSEStreamParser:
         events = parser.feed(b"data: x\r\n\n")
         assert [event.data for event in events] == ["x"]
 
+    def test_crlf_separator_is_recognized(self) -> None:
+        """纯 CRLF 空行（\\r\\n\\r\\n）也应即时切分（D17 P1-1 回归）。"""
+        parser = SSEStreamParser()
+        events = parser.feed(b"data: a\r\n\r\ndata: b\r\n\r\n")
+        assert [event.data for event in events] == ["a", "b"]
+        # 事件全部在本次 feed 产出，缓冲不应残留——修复前这里会把两条事件
+        # 一直留到 finish()，超过缓冲上限时还会误报「端点未发送事件分隔符」
+        assert parser.finish() == []
+
+    def test_crlf_event_lines_are_normalized(self) -> None:
+        """CRLF 流的事件内部行尾应归一，字段值不携带尾随 \\r。"""
+        parser = SSEStreamParser()
+        events = parser.feed(b"data: l1\r\ndata: l2\r\n\r\n")
+        # 修复前 data 值会变成 "l1\r\nl2\r"（每行残留尾随 \r）
+        assert [event.data for event in events] == ["l1\nl2"]
+
+    def test_multiline_data_is_joined_in_stream_path(self) -> None:
+        """流式路径同样按规范用 \\n 拼接多个 data 行（与 parse_sse_events 同口径）。"""
+        parser = SSEStreamParser()
+        events = parser.feed(b"data: l1\ndata: l2\n\n")
+        assert [event.data for event in events] == ["l1\nl2"]
+
     def test_multiple_events_in_one_chunk(self) -> None:
         """单个分片内含多个完整事件时应一次性全部产出。"""
         parser = SSEStreamParser()
         events = parser.feed(b"data: a\n\ndata: b\n\n")
         assert [event.data for event in events] == ["a", "b"]
+
+    def test_large_chunk_with_complete_events_is_not_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """含完整事件的大分片不应触发缓冲超限（D17 P2-1 回归）。
+
+        上限约束的是「未消化的残留」而非「单次喂入的字节数」。把上限压到 16 字节
+        再喂入 24 字节的三条完整事件：判据若落在喂入总量上就会误报，
+        落在残留上则正常切分后残留为 0。
+        """
+        monkeypatch.setattr(sse_module, "_MAX_BUFFER_SIZE", 16)
+        parser = SSEStreamParser()
+        events = parser.feed(b"data: a\n\ndata: b\n\ndata: c\n\n")
+        assert [event.data for event in events] == ["a", "b", "c"]
+        # 残留为空：finish 无事可做，证明事件已被即时消化而非留在缓冲里
+        assert parser.finish() == []
 
     def test_comment_only_event_is_skipped(self) -> None:
         """保活注释事件不产出。"""
@@ -877,6 +924,19 @@ class TestIterStreamDeltas:
             _delta_event("ignored").encode(),
         ]
         assert _deltas(chunks) == ["first"]
+
+    def test_crlf_stream_yields_deltas(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CRLF 端点（整条流以 \\r\\n 收尾）应逐片产出 delta（D17 P1-1 端到端回归）。
+
+        修复前 CRLF 流的事件无法即时切分，整条流只能堆在缓冲里等 finish()，
+        长流必然撞上缓冲上限并误报「端点未发送事件分隔符」。这里把上限压到单个
+        分片大小以下：修复后事件即时消化、上限不参与判定；修复前喂入首个分片
+        就会抛 AdapterError。
+        """
+        monkeypatch.setattr(sse_module, "_MAX_BUFFER_SIZE", 32)
+        crlf_chunks = [chunk.replace(b"\n", b"\r\n") for chunk in _STREAM_CHUNKS]
+        # 分片边界与 LF 流完全一致（三个 delta），仅行尾不同
+        assert _deltas(crlf_chunks) == ["Hello", " ", "world"]
 
     def test_non_2xx_status_raises_with_body_context(self) -> None:
         """HTTP 非 2xx 时抛 AdapterError，context 记录状态码与响应体片段。"""

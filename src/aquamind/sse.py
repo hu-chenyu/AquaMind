@@ -224,13 +224,16 @@ def _parse_single_event(raw_event: str) -> SSEEvent:
             # 因为 OpenAI 流式响应几乎不使用 id 字段，保持简单
             event_id = value
         elif field == "retry":
-            # retry 必须是非负整数；解析失败则忽略该行（不覆盖之前的有效值）
+            # SSE 规范：retry 的值必须全为数字，否则忽略该**字段**（保留此前的值）。
+            # 负数同样按无效处理，但绝不能把先前一条有效的 retry 抹成 None——
+            # 那会让「同名后出现的值覆盖先出现的值」这条字段通则单单对 retry 例外
             try:
-                retry = int(value)
-                if retry < 0:
-                    retry = None
+                parsed_retry = int(value)
             except ValueError:
                 pass
+            else:
+                if parsed_retry >= 0:
+                    retry = parsed_retry
         # 其他字段（如 OpenAI 扩展字段）按规范忽略
 
     # 多个 data 行以 \\n 拼接；如果没有 data 行则 data 为 None
@@ -285,12 +288,18 @@ class SSEStreamParser:
             list[SSEEvent]: 本分片中完整的事件列表（可能为空）。
 
         Raises:
-            AdapterError: 缓冲超过 _MAX_BUFFER_SIZE（端点不发空行）时抛出。
+            AdapterError: 提取完整事件后**残留**的缓冲仍超过 _MAX_BUFFER_SIZE
+                （端点不发事件分隔符）时抛出。
         """
         # 把新分片追加到缓冲
         self._buffer.extend(chunk)
 
-        # 防内存耗尽：缓冲超过上限说明端点一直不发空行（可能是错误响应或攻击），
+        # 先提取完整事件、再判残留：上限约束的是「未消化的残留」而不是「本次喂入的
+        # 分片大小」。若把判断放在提取之前，一个内含大量完整事件的大分片（例如回放
+        # 场景一次性喂入整个响应体）会被误判成「端点未发送事件分隔符」而不予受理
+        events = self._extract_events()
+
+        # 防内存耗尽：残留超过上限说明端点一直不发空行（可能是错误响应或攻击），
         # 直接报错而非继续累积
         if len(self._buffer) > _MAX_BUFFER_SIZE:
             raise AdapterError(
@@ -298,8 +307,7 @@ class SSEStreamParser:
                 context={"buffer_size": len(self._buffer)},
             )
 
-        # 尝试从缓冲中提取完整事件
-        return self._extract_events()
+        return events
 
     def finish(self) -> list[SSEEvent]:
         """流结束时调用，处理缓冲中可能残留的最后一个事件。
@@ -336,7 +344,7 @@ class SSEStreamParser:
         """从当前缓冲中提取所有完整事件，不完整的尾部留在缓冲中。
 
         核心逻辑：
-        1. 在缓冲中查找事件分隔符（\\n\\n 或 \\r\\n\\r\\n）
+        1. 在缓冲中查找事件分隔符（空行 \\n\\n 或 \\r\\n\\r\\n），取最先出现的那一个
         2. 把分隔符之前的内容解码为文本，解析为事件
         3. 把分隔符之后的内容留在缓冲中
         4. 重复直到缓冲中没有完整分隔符
@@ -347,28 +355,29 @@ class SSEStreamParser:
         events: list[SSEEvent] = []
 
         while True:
-            # 查找事件分隔符：优先查找 \\n\\n（最常见），同时考虑 \\r\\n\\r\\n
-            # 策略：先找 \\n\\n，如果找到的位置前面是 \\r（即 \\r\\n\\n），
-            # 说明实际是 \\r\\n\\r\\n 的一部分，需要调整分隔符长度
-            sep_pos = self._buffer.find(b"\n\n")
+            # 查找事件分隔符（空行）：SSE 规范的行尾有 \\n 与 \\r\\n 两种，故空行
+            # 既可能是 \\n\\n，也可能是 \\r\\n\\r\\n；两种都要认，并取**最先出现**的
+            # 那一个。两个候选位置不会互相嵌套：\\r\\n\\r\\n 内部不含 \\n\\n 子串
+            lf_pos = self._buffer.find(b"\n\n")
+            crlf_pos = self._buffer.find(b"\r\n\r\n")
 
-            if sep_pos == -1:
+            if lf_pos == -1 and crlf_pos == -1:
                 # 缓冲中没有完整分隔符，停止提取，剩余内容留到下一次 feed
                 break
 
-            # 确定分隔符的实际长度：检查 sep_pos 位置是否是 \\r\\n\\n 的一部分
-            # 即 sep_pos-1 是否是 \\r（此时分隔符是 \\r\\n\\n，长度 3）
-            # 或者更准确地说，事件文本以 \\r\\n 结尾，然后又一个 \\r\\n 作为空行
-            # 简化处理：如果 sep_pos > 0 且 buffer[sep_pos-1] == ord('\\r')，
-            # 说明事件行尾是 \\r\\n，分隔符从 \\r 开始算（\\r\\n\\n）
-            if sep_pos > 0 and self._buffer[sep_pos - 1] == ord("\r"):
-                # 事件文本包含末尾的 \\r，分隔符是 \\r\\n\\n（从 \\r 开始）
-                event_end = sep_pos - 1  # 事件文本的结束位置（不含 \\r）
-                separator_length = 3  # \\r\\n\\n
+            if crlf_pos != -1 and (lf_pos == -1 or crlf_pos < lf_pos):
+                # CRLF 空行：事件文本结束于 \\r 之前，分隔符占 4 字节
+                event_end = crlf_pos
+                separator_length = 4
+            elif lf_pos > 0 and self._buffer[lf_pos - 1] == ord("\r"):
+                # 混合行尾（\\r\\n\\n）：事件行尾是 \\r\\n 而空行只有 \\n，
+                # 事件文本同样结束于 \\r 之前，分隔符占 3 字节
+                event_end = lf_pos - 1
+                separator_length = 3
             else:
                 # 事件行尾是 \\n，分隔符就是 \\n\\n
-                event_end = sep_pos  # 事件文本的结束位置（不含第一个 \\n）
-                separator_length = 2  # \\n\\n
+                event_end = lf_pos
+                separator_length = 2
 
             # 提取事件文本（分隔符之前的部分）
             event_bytes = bytes(self._buffer[:event_end])
@@ -385,8 +394,10 @@ class SSEStreamParser:
                 # 但防御性处理比崩溃好
                 continue
 
-            # 解析单个事件
-            event = _parse_single_event(event_text)
+            # 解析单个事件。行尾先归一为 \n：CRLF 流下事件**内部**的行尾同样是
+            # \r\n，不归一会让每行的值带上尾随 \r（如 data 值变成 "x\r"），
+            # 与 parse_sse_events 在入口处统一 \r\n 的口径一致
+            event = _parse_single_event(event_text.replace("\r\n", "\n"))
 
             # 纯注释事件不产出（与 parse_sse_events 保持一致）
             if (

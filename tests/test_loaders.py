@@ -193,6 +193,40 @@ class TestLoadErrors:
             assert "路径是目录而非文件" in message
 
 
+class TestGenericOserrorWrapping:
+    """测试通用 OSError 也被收敛为 LoaderError（D17 P2-3 回归）。
+
+    原实现只捕获 FileNotFoundError / PermissionError / IsADirectoryError /
+    UnicodeDecodeError 四类；其余 OSError 会以裸异常穿透 ``except LoaderError``
+    契约。这类路径平台相关：Windows 下父路径是文件时归一为 FileNotFoundError
+    （恰好被捕获），类 Unix 下则是 NotADirectoryError（原实现漏网），
+    故用 monkeypatch 固定异常形态，让两个平台跑的是同一条分支。
+    """
+
+    def test_not_a_directory_error_is_wrapped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """父路径不是目录（POSIX 抛 NotADirectoryError）应包装为 LoaderError。"""
+        blocker = tmp_path / "blocker.yaml"
+        blocker.write_text("[]", encoding="utf-8")
+        target = blocker / "cases.yaml"
+        original_read_text = Path.read_text
+
+        def _fake_read_text(self: Path, encoding: str | None = None) -> str:
+            """仅对目标路径抛出 NotADirectoryError，其余调用透传原实现。"""
+            if self == target:
+                raise NotADirectoryError(20, "Not a directory", str(self))
+            return original_read_text(self, encoding=encoding)
+
+        monkeypatch.setattr(Path, "read_text", _fake_read_text)
+        with pytest.raises(LoaderError) as exc_info:
+            load_cases(target)
+        assert "文件读取失败" in str(exc_info.value)
+        assert exc_info.value.context["file"] == str(target)
+        # 异常链保留原始 OSError，根因不丢失
+        assert isinstance(exc_info.value.__cause__, NotADirectoryError)
+
+
 class TestContractPropagation:
     """测试契约校验错误向上传播（加载器不吞 ValidationError）。"""
 
