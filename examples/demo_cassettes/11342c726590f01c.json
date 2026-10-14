@@ -1,0 +1,38 @@
+{
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json"
+  },
+  "request_body": "{\"messages\": [{\"content\": \"请分片输出一句演示响应\", \"role\": \"user\"}], \"model\": \"demo-model\", \"stream\": true}",
+  "response_status_code": 200,
+  "response_headers": {
+    "Content-Type": "text/event-stream"
+  },
+  "response_body": "{\"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"message\": {\"content\": \"分片演示响应结束。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
+  "request_hash": "11342c726590f01c",
+  "recorded_at": "2026-10-14T01:21:04.262515+00:00",
+  "format_version": 2,
+  "timing": [
+    {
+      "index": 0,
+      "arrival_ms": 0.0,
+      "text": "分片"
+    },
+    {
+      "index": 1,
+      "arrival_ms": 92.5,
+      "text": "演示"
+    },
+    {
+      "index": 2,
+      "arrival_ms": 210.0,
+      "text": "响应"
+    },
+    {
+      "index": 3,
+      "arrival_ms": 318.75,
+      "text": "结束。"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json"
+  },
+  "request_body": "{\"messages\": [{\"content\": \"超时场景的演示请求\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
+  "response_status_code": 504,
+  "response_headers": {
+    "Content-Type": "application/json",
+    "X-AquaMind-Demo-Failure-Mode": "timeout"
+  },
+  "response_body": "",
+  "request_hash": "1e3bacfbe1e2f463",
+  "recorded_at": "2026-10-14T01:21:04.267542+00:00",
+  "format_version": 2,
+  "timing": null
+}
