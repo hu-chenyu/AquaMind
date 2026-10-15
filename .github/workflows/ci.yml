@@ -2,6 +2,8 @@ name: CI
 
 # D2 起即生效的质量护栏（对应开发计划 CI 门禁条款的提前落地）。
 # M1 首批用例入库前曾以"空收集不判红"过渡（已移除）；现为硬门禁（收集数下限 + pytest 严格退出码）。
+# D18（2026-10-16）M1 收口升级：覆盖率硬门禁（全仓 ≥90% + 三核心文件各 100%）+
+# 3.13/3.14 ubuntu 探测位（continue-on-error，只观察不判红）+ PyPI 长描述门禁（相对链接 + twine check）。
 
 on:
   push:
@@ -10,18 +12,32 @@ on:
 
 env:
   # 测试收集数下限（比照 TestMatrix 的 TEST_COUNT_BASELINE 做法，改动为 -lt 下限）。
-  # 当前 M1 实收 548 条；下调此值等于承认「删掉一部分用例」，须在提交信息里说明。
-  TEST_COUNT_FLOOR: "548"
+  # 当前 M1 收口实收 580 条；下调此值等于承认「删掉一部分用例」，须在提交信息里说明。
+  TEST_COUNT_FLOOR: "580"
 
 jobs:
   quality:
-    name: lint-test (${{ matrix.os }} / py${{ matrix.python-version }})
+    name: lint-test (${{ matrix.os }} / py${{ matrix.python-version }})${{ matrix.experimental && ' [探测位·不判红]' || '' }}
     runs-on: ${{ matrix.os }}
+    # 探测位只观察不判红：3.13/3.14 的失败不让整体 CI 变红（continue-on-error），
+    # 避免上游工具链尚未适配时阻断主线。挂 2026-11-05 观察期，到期复核通过率后再决策是否转正。
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
+        # 必过位：3.11 双 OS 笛卡尔积。experimental 显式声明为 false，
+        # 使该键在必过组合中也有定义，避免 continue-on-error 取到未定义值。
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.11"]
+        experimental: [false]
+        include:
+          # 探测位（仅 ubuntu，节省 CI 时间）：主探测 3.13 + 次探测 3.14
+          - os: ubuntu-latest
+            python-version: "3.13"
+            experimental: true
+          - os: ubuntu-latest
+            python-version: "3.14"
+            experimental: true
 
     # Windows runner 默认 shell 为 pwsh，这里统一指定 bash（Git Bash 随 runner 内置），
     # 保证收集数门禁脚本与 pytest 调用在两个平台上行为完全一致。
@@ -81,7 +97,35 @@ jobs:
           fi
           echo "收集数 $count >= 下限 $TEST_COUNT_FLOOR，通过"
 
-      - name: Pytest
-        # 硬门禁，不再容忍退出码 5。M1 首批用例已入库（当前 548 条），
+      - name: Pytest + 覆盖率硬门禁
+        # 硬门禁，不再容忍退出码 5。M1 用例已入库（当前 580 条），
         # 「未收集到测试」只应表示真实故障，不该与通过等价。
-        run: pytest -q
+        # D18 起覆盖率从「本地人工核对」升级为 CI 硬门禁，同一步内顺序执行两项检查：
+        #   1) 全仓覆盖率 ≥90%（--cov-fail-under=90）
+        #   2) 三个核心文件各 100%（协议/调度/并发三类最难被用例穷尽的逻辑）
+        # pytest --cov 会写出 .coverage，随后的 coverage report 直接读取，无需重跑测试。
+        # 任一检查不达标即 exit 非零，判红不放过。
+        run: |
+          pytest --cov=src/aquamind --cov-report=term-missing --cov-fail-under=90 -q
+          coverage report \
+            --include="src/aquamind/sse.py,src/aquamind/replay.py,src/aquamind/budget.py" \
+            --fail-under=100
+
+      - name: PyPI 长描述相对链接门禁
+        # 相对链接（](./xxx)）在 PyPI 页面上会解析到 pypi.org 域名之下，必然断链。
+        # 用 git grep 精确拦截：命中即失败；零命中时 git grep 返回 1，属预期（未找到即为通过）。
+        run: |
+          if git grep -nE '\]\(\./' -- README.md; then
+            echo "README.md 含相对链接，PyPI 渲染时会断链，请改为绝对链接" >&2
+            exit 1
+          fi
+          echo "README.md 无相对链接，通过"
+
+      - name: PyPI 长描述渲染预检（twine check）
+        # 与上一步互补：twine check 只验长描述能否被 PyPI 渲染（markdown 合法性），
+        # 不解析 href 目标，故对断链不敏感——两者缺一不可。
+        # 构建产物落 dist/（已在 .gitignore），CI runner 上用完即弃，不影响仓库。
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
