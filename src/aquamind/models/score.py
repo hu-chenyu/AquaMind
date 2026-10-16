@@ -23,7 +23,8 @@ Judge 适配器（M2-D07）各自实现打分，输出统一收敛为本模块�
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from collections.abc import Mapping
+from typing import Annotated, Any, Self
 
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -80,6 +81,40 @@ class ScoreStep(BaseModel):
   partial_score: ScoreValue = Field(description="本步骤产出的中间分，0.0-1.0")
   reasoning: NonBlankStr = Field(description="本步骤的推理说明（人类可读）")
 
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**：它把新值直接
+    塞进副本，于是 ``step.model_copy(update={"partial_score": 5.0})`` 能产出一个
+    越界中间分、``update={"reasoning": ""}`` 能产出空推理说明，全程无报错。
+    契约的可信度不能依赖调用方自觉，故带 update 时改走 ``model_validate``；
+    不带 update 时保持官方语义（纯复制，不做无谓的重新校验）。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（越界、空值、未知字段等）时抛出。
+    """
+    copied = super().model_copy(update=update, deep=deep)
+    if update:
+      # 把 update 的原样取值并回副本字段值再走完整校验（field_validator /
+      # AfterValidator / extra="forbid" 全部重跑，与直接构造等价）。
+      # 为什么不能只校验副本：model_copy 会先把「不属于本模型的键」静默丢掉，
+      # 不并回的话 extra="forbid" 就形同虚设（拼错的字段名被吞掉，与契约口径相悖）
+      candidate: dict[str, Any] = {**copied.__dict__, **update}
+      return self.__class__.model_validate(candidate)
+    return copied
+
 
 class ScoreTrace(BaseModel):
   """评分追溯链路：一条用例从输入到最终分的完整评分过程。
@@ -129,6 +164,40 @@ class ScoreTrace(BaseModel):
       )
     return self
 
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过追溯链不变式。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，因此
+    ``trace.model_copy(update={"final_score": 0.9})`` 能造出一个
+    ``final_score`` 与链尾 ``partial_score`` 不一致的 ``ScoreTrace``——决策四
+    「把结论与证据焊死」这条核心不变式会被官方 API 一行撕开。故带 update 时
+    改走 ``model_validate``（``model_validator`` 随之重跑）；不带 update 时
+    保持官方语义。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（含破坏追溯链不变式）时抛出。
+    """
+    copied = super().model_copy(update=update, deep=deep)
+    if update:
+      # 把 update 的原样取值并回副本字段值再走完整校验：步骤列表在此重新校验为
+      # ScoreStep，追溯链不变式（final_score = 链尾中间分）在此重新成立；
+      # 并回也是为了让未知键落到 model_validate 的 extra="forbid" 上
+      candidate: dict[str, Any] = {**copied.__dict__, **update}
+      return self.__class__.model_validate(candidate)
+    return copied
+
 
 class Score(BaseModel):
   """单条评分结果：一条用例经某个评分器评分后的结论产物。
@@ -163,3 +232,36 @@ class Score(BaseModel):
   metadata: dict[str, Any] = Field(
     default_factory=dict, description="可扩展元数据（评分器自定义附加信息）"
   )
+
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，于是
+    ``score.model_copy(update={"score": 5.0, "reason": ""})`` 能产出一个越界
+    分数 + 空理由的 ``Score``，全程无报错——这正是决策三「产出即终态」要防的
+    分叉入口。故带 update 时改走 ``model_validate``；不带 update 时保持官方
+    语义（纯复制，不做无谓的重新校验）。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（越界分数、空理由、未知字段等）时抛出。
+    """
+    copied = super().model_copy(update=update, deep=deep)
+    if update:
+      # 把 update 的原样取值并回副本字段值再走完整校验：分数范围、非空白理由、
+      # extra="forbid" 全部重跑，与直接构造等价；并回也是为了让未知键落到
+      # model_validate 的 extra="forbid" 上（model_copy 会静默丢弃未知键）
+      candidate: dict[str, Any] = {**copied.__dict__, **update}
+      return self.__class__.model_validate(candidate)
+    return copied

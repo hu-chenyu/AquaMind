@@ -11,7 +11,12 @@
   8. 与输入侧契约衔接：TestCase（含 ScoreTag）→ 模拟评分 → Score/ScoreTrace，
     标签与分数沿链路可对应；
   9. 三个一产物：scripts/score_contract_example.py 按同一条命令可复跑，
-    输出合法 JSON 且各场景产物与追溯链自洽（子进程真实 CLI 口径）。
+    输出合法 JSON 且各场景产物与追溯链自洽（子进程真实 CLI 口径）；
+  10. ``model_copy(update=...)`` 的校验收口：带 update 的复制与直接构造走同一条校验
+    路径——分数越界、空/空白理由、未知字段、追溯链不变式破坏均不可绕过；
+  11. 跨模型一致性纪律：Score 与 ScoreTrace 成对构造（``final_score`` 取
+    ``score.score``），并显式留痕「契约层不校验跨模型相等」这一空白；
+  12. 可运行示例 ``examples/score_contract/demo.py`` 的子进程冒烟（退出码 0 + 四段输出）。
 
 全部用例为纯数据契约检查，不触真实 API（CI 零 key）。
 """
@@ -35,6 +40,8 @@ from aquamind.models import Score, ScoreStep, ScoreTag, ScoreTrace, TestCase
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 # 示例生成脚本：三个一产物之一，用子进程按真实 CLI 口径复跑
 _EXAMPLE_SCRIPT = _REPO_ROOT / "scripts" / "score_contract_example.py"
+# 可运行示例：同样按真实 CLI 口径复跑——「demo 退出码 0」此前无任何测试保障
+_DEMO_SCRIPT = _REPO_ROOT / "examples" / "score_contract" / "demo.py"
 # 固定时刻（UTC）：契约测试不依赖当前时间，断言可逐字复现
 _FIXED_TS = datetime(2026, 10, 17, 9, 0, tzinfo=UTC)
 
@@ -440,3 +447,187 @@ class TestExampleScript:
 
     # 可复现：时间戳固定，同一条命令两次运行必须逐字节一致（否则无法作为比对基线）
     assert self._run_script().stdout == first.stdout
+
+
+class TestModelCopyGuard:
+  """``model_copy(update=...)`` 不得绕过契约校验（P1-1 的回归守护）。
+
+  pydantic v2 的 ``model_copy`` 默认**不跑任何校验**，等于一个官方后门：越界分数、
+  空理由、被破坏的追溯链不变式都能一行造出来。故三个模型都重写了该方法，本类逐条
+  锁住「带 update 的复制与直接构造走同一条校验路径」这一结果。
+  """
+
+  def test_model_copy_without_update_returns_equivalent_instance(self) -> None:
+    """不带 update 时保持官方语义：值相等、对象不同、类型与嵌套结构不变。"""
+    score = Score(**_score_payload(score=0.75, matched_tags=["accuracy"]))
+    copied = score.model_copy()
+    assert copied == score
+    assert copied is not score
+    assert isinstance(copied, Score)
+
+    step = ScoreStep(**_step_payload())
+    assert step.model_copy() == step
+
+    trace = ScoreTrace(**_trace_payload())
+    copied_trace = trace.model_copy()
+    assert copied_trace == trace
+    # 纯复制不丢类型与精度：步骤仍是 ScoreStep，时间戳仍带时区（无序列化中转失真）
+    assert isinstance(copied_trace.steps[0], ScoreStep)
+    assert copied_trace.timestamp == trace.timestamp
+
+  def test_model_copy_update_rejects_out_of_range_score(self) -> None:
+    """越界分数被拦：model_copy 不再是改分数的后门。"""
+    score = Score(**_score_payload())
+    with pytest.raises(ValidationError) as exc_info:
+      score.model_copy(update={"score": 5.0})
+    assert ("score",) in {e["loc"] for e in exc_info.value.errors()}
+    assert {e["type"] for e in exc_info.value.errors()} == {"less_than_equal"}
+    # 原实例不受影响：校验失败发生在副本上，不存在"改了一半"的中间态
+    assert score.score == 1.0
+
+  def test_model_copy_update_rejects_blank_reason(self) -> None:
+    """空串与全空白理由都被拦（min_length 与自定义校验器两条路径各走一次）。"""
+    score = Score(**_score_payload())
+    with pytest.raises(ValidationError) as empty_exc:
+      score.model_copy(update={"reason": ""})
+    assert ("reason",) in {e["loc"] for e in empty_exc.value.errors()}
+    assert {e["type"] for e in empty_exc.value.errors()} == {"string_too_short"}
+
+    with pytest.raises(ValidationError) as blank_exc:
+      score.model_copy(update={"reason": "  "})
+    assert ("reason",) in {e["loc"] for e in blank_exc.value.errors()}
+    assert any("空白" in e["msg"] for e in blank_exc.value.errors())
+
+  def test_model_copy_update_rejects_unknown_field(self) -> None:
+    """未知字段被拦，且不能被静默丢弃（本次复核发现的后门）。
+
+    ``model_copy`` 自己会把「不属于本模型」的键悄悄丢掉，所以收口实现必须把
+    ``update`` 的原样取值并回校验入参——否则 ``extra="forbid"`` 只是摆设：
+    拼错的字段名会被吞掉，与契约「不静默丢弃」的口径相悖。
+    """
+    score = Score(**_score_payload())
+    with pytest.raises(ValidationError) as exc_info:
+      score.model_copy(update={"scorrer": "exact"})
+    assert ("scorrer",) in {e["loc"] for e in exc_info.value.errors()}
+    assert any(e["type"] == "extra_forbidden" for e in exc_info.value.errors())
+
+  def test_model_copy_update_rejects_invariant_violation(self) -> None:
+    """追溯链不变式不可绕过：最终分、步骤数、时区三条候选逐个锁住。"""
+    trace = ScoreTrace(**_trace_payload())
+    with pytest.raises(ValidationError) as exc_info:
+      trace.model_copy(update={"final_score": 0.9})
+    # 模型级校验器错误 loc 为空，故断言消息内容含字段名与两个取值
+    message = str(exc_info.value)
+    assert "final_score" in message
+    assert "0.9" in message
+
+    with pytest.raises(ValidationError) as steps_exc:
+      trace.model_copy(update={"steps": []})
+    assert ("steps",) in {e["loc"] for e in steps_exc.value.errors()}
+
+    with pytest.raises(ValidationError) as stamp_exc:
+      trace.model_copy(update={"timestamp": "2026-10-17T09:00:00"})
+    assert ("timestamp",) in {e["loc"] for e in stamp_exc.value.errors()}
+
+    # 三步都失败后原链完好：不变式在原件上依然成立
+    assert trace.final_score == trace.steps[-1].partial_score
+
+  def test_model_copy_update_accepts_valid_change(self) -> None:
+    """合法 update 正常生效：值改到位、原实例不变、嵌套对象仍被校验为契约类型。"""
+    score = Score(**_score_payload(score=1.0, passed=True))
+    updated = score.model_copy(
+      update={"score": 0.5, "passed": False, "matched_tags": ["accuracy"]}
+    )
+    assert updated.score == 0.5
+    assert updated.passed is False
+    assert updated.matched_tags == ["accuracy"]
+    assert updated is not score
+    # 原实例不受影响（复制语义，不是就地修改）
+    assert score.score == 1.0 and score.passed is True
+
+    step = ScoreStep(**_step_payload())
+    assert step.model_copy(update={"partial_score": 0.25}).partial_score == 0.25
+
+    # 链尾与最终分同步改：合法复制上不变式依然成立，嵌套 dict 被重新校验为 ScoreStep
+    revised_steps = _trace_payload()["steps"]
+    revised_steps[-1]["partial_score"] = 0.75
+    trace = ScoreTrace(**_trace_payload())
+    copied_trace = trace.model_copy(update={"steps": revised_steps, "final_score": 0.75})
+    assert copied_trace.final_score == 0.75 == copied_trace.steps[-1].partial_score
+    assert isinstance(copied_trace.steps[-1], ScoreStep)
+    assert trace.final_score == 0.5 # 原链不受影响
+
+  def test_model_copy_preserves_frozen(self) -> None:
+    """复制出的实例仍是 frozen：不能借复制换一个可变对象回来。"""
+    score = Score(**_score_payload())
+    for instance in (score.model_copy(), score.model_copy(update={"score": 0.5})):
+      with pytest.raises(ValidationError) as exc_info:
+        instance.score = 0.9
+      assert any(e["type"] == "frozen_instance" for e in exc_info.value.errors())
+
+
+class TestCrossModelConsistency:
+  """Score 与 ScoreTrace 的跨模型一致性纪律（P2-1：契约只焊住 ScoreTrace 内部）。"""
+
+  def test_score_and_trace_must_be_constructed_as_pair(self) -> None:
+    """成对构造模式：``final_score`` 直接取 ``score.score``（ADR 0012 边界八）。
+
+    两个模型互不引用，契约层**不校验** ``Score.score == ScoreTrace.final_score``；
+    这里把 ADR 写明的模式固化为可运行用例，并在同一条用例里显式演示「分叉是可能
+    的」——正因如此才需要成对构造的纪律（M2-D06/D10 以工厂函数兜底）。
+    """
+    score = Score(**_score_payload(score=0.5, passed=False))
+    trace = ScoreTrace(
+      case_id="case-paired",
+      steps=[ScoreStep(**_step_payload(partial_score=score.score))],
+      final_score=score.score, # 取同一取值，不重新计算
+      scorer_version="exact-1.0.0",
+      timestamp=_FIXED_TS,
+    )
+    assert trace.final_score == score.score == trace.steps[-1].partial_score
+
+    # 反向演示：另一条各自都合法的链路，其 final_score 与上面这个 Score 并不相等——
+    # 跨模型一致性在契约层拦不住（留白已写入 ADR 边界八）
+    divergent = ScoreTrace(
+      **_trace_payload(
+        steps=[_step_payload(partial_score=0.25)],
+        final_score=0.25,
+      )
+    )
+    assert divergent.final_score == divergent.steps[-1].partial_score
+    assert divergent.final_score != score.score
+
+
+class TestDemoScript:
+  """``examples/score_contract/demo.py`` 的自动化守护（P3-1）。"""
+
+  def _run_demo(self) -> subprocess.CompletedProcess[str]:
+    """以子进程运行可运行示例（脚本路径由 __file__ 反推，不依赖 CWD）。
+
+    Returns:
+      subprocess.CompletedProcess[str]: 含 returncode/stdout/stderr 的进程结果。
+    """
+    # PYTHONIOENCODING 固定子进程输出为 UTF-8：Windows 管道默认走本地代码页（cp936），
+    # 与父进程按 UTF-8 解码的约定不一致会直接炸在解码步骤上
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run(
+      [sys.executable, str(_DEMO_SCRIPT)],
+      capture_output=True,
+      text=True,
+      encoding="utf-8",
+      cwd=_REPO_ROOT,
+      env=env,
+      check=False,
+    )
+
+  def test_demo_script_runs_successfully(self) -> None:
+    """demo.py 退出码 0，且 stderr 里没有异常堆栈。"""
+    completed = self._run_demo()
+    assert completed.returncode == 0, completed.stderr
+    assert "Traceback" not in completed.stderr
+
+  def test_demo_output_contains_four_sections(self) -> None:
+    """输出含四段标题：构造 / 校验 / 不可变 / 序列化（少一段说明演示被裁剪）。"""
+    stdout = self._run_demo().stdout
+    for section in ("1. 构造", "2. 校验", "3. 不可变", "4. 序列化"):
+      assert section in stdout, f"demo 输出缺少段落：{section}"
