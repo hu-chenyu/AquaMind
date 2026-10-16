@@ -283,12 +283,13 @@ class TestScoreTrace:
     assert {e["type"] for e in exc_info.value.errors()} == {"too_short"}
 
   def test_naive_timestamp_rejected(self) -> None:
-    """naive datetime 被拒；带非 UTC 偏移的时区感知时间必须被接受（不强制 UTC）。"""
-    # 刻意构造 naive datetime：它就是被拒场景的输入，加上时区反而测不到
-    # timezone_aware 这条约束，故对 DTZ001 定向豁免（仅此一行）
-    naive_ts = datetime(2026, 10, 17, 9, 0) # noqa: DTZ001
+    """无时区时间戳被拒；带非 UTC 偏移的时区感知时间必须被接受（不强制 UTC）。"""
+    # 用字符串给无时区时间，而不是构造 naive datetime：这正是真实入参形态
+    # （裁判与落库侧给的时间戳本来就是字符串）。另一个原因是不必写规则豁免：
+    # 本地 ruff 启用 DTZ001、CI 侧未启用，写下的定向豁免会在 CI 触发 RUF100
+    # （未使用的豁免指令）而判红——本地绿、CI 红的经典分歧
     with pytest.raises(ValidationError) as exc_info:
-      ScoreTrace(**_trace_payload(timestamp=naive_ts))
+      ScoreTrace(**_trace_payload(timestamp="2026-10-17T09:00:00"))
     assert ("timestamp",) in {e["loc"] for e in exc_info.value.errors()}
     assert {e["type"] for e in exc_info.value.errors()} == {"timezone_aware"}
 
