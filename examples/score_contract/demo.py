@@ -145,16 +145,16 @@ def _demo_validation(trace: ScoreTrace) -> None:
     except ValidationError as exc:
         print(f"  最终分≠链尾      -> 被拒：{exc.errors()[0]['msg']}")
 
-    # naive datetime：跨时区比对时会静默错位，必须在入口拦住。
-    # 这里刻意构造无时区时间（它就是被拒场景的输入），故对 DTZ001 定向豁免
-    naive_ts = datetime(2026, 10, 17, 9, 0)  # noqa: DTZ001
+    # 无时区时间戳：跨时区比对时会静默错位，必须在入口拦住。
+    # 这里直接给字符串——裁判与落库侧给的时间戳本来就是字符串形态，
+    # 既复现真实入参，也避免构造无时区的 datetime 对象（不必写规则豁免）
     try:
         ScoreTrace(
             case_id="demo-naive-ts",
             steps=[trace.steps[0]],
             final_score=1.0,
             scorer_version="rubric-1.0.0",
-            timestamp=naive_ts,
+            timestamp="2026-10-17T09:00:00",
         )
     except ValidationError as exc:
         print(f"  时间戳缺时区     -> 被拒，定位字段={exc.errors()[0]['loc']}")
