@@ -69,7 +69,21 @@ jobs:
     # 核心期即开启依赖漏洞扫描（原计划仅维护期 T9-04 覆盖）。
     # 若出现当前无法立即升级的告警，须用 `pip-audit --ignore <VULN-ID>` 定向放行，
     # 并在此处注释登记原因与复审过期日；禁止无注释的全局忽略。
-    run: pip-audit
+    # 重试机制：ubuntu runner 偶发连 PyPI 被 RemoteDisconnected（非漏洞），
+    # 最多重试 3 次、每次间隔 10s；真有漏洞（exit 1）不重试直接失败。
+    run: |
+     for i in 1 2 3; do
+      pip-audit --timeout 30 && exit 0
+      code=$?
+      if [ "$code" -eq 1 ]; then
+       echo "pip-audit found vulnerabilities (exit 1), not retrying."
+       exit 1
+      fi
+      echo "pip-audit attempt $i failed (exit $code), retrying in 10s..."
+      sleep 10
+     done
+     echo "pip-audit failed after 3 attempts."
+     exit 1
 
    - name: Ruff lint
     # scripts/ 纳入检查：pre_release_scan.py 是 tracked 公开脚本，
