@@ -190,6 +190,15 @@ def _parse_json(content: str, file: str) -> list[dict[str, Any]]:
   except json.JSONDecodeError as e:
     # JSONDecodeError.lineno 已是 1 起始行号，直接透传
     raise _report_error(file, e.lineno, f"JSON 解析失败: {e}") from e
+  except RecursionError as e:
+    # 深嵌套 JSON 会耗尽解释器递归栈。RecursionError 不是 JSONDecodeError 的
+    # 子类，不单独捕收就会以裸异常击穿「调用方只需 except LoaderError」的契约。
+    # 整体解析无法定位到行，line 记 None 而非误报。
+    raise _report_error(
+      file,
+      None,
+      "JSON 嵌套过深（超出解释器递归上限），请降低嵌套层级",
+    ) from e
   return _ensure_case_list(data, file)
 
 
@@ -226,8 +235,14 @@ def _iter_jsonl_lines(content: str) -> Iterator[tuple[int, str]]:
   Notes:
     只跳过空白行，行号仍取物理行号（不因跳过而重新编号），
     这样报错位置与编辑器里看到的行号一一对应。
+
+    这里刻意不用 ``str.splitlines()``：它会按 U+2028/U+2029/U+0085 等
+    「额外行边界」切分，而这些字符在 JSON 字符串内是合法内容，用 splitlines
+    会把一行合法 JSON 拆成两段、报出并不存在的语法错误。``_read_text`` 以
+    universal newline 模式读取，CRLF 与孤立 CR 已归一为 LF，故按 ``\\n`` 切分
+    得到的就是物理行；行尾残留的 CR 再由 ``strip()`` 兜底。
   """
-  for line_no, raw_line in enumerate(content.splitlines(), start=1):
+  for line_no, raw_line in enumerate(content.split("\n"), start=1):
     stripped = raw_line.strip()
     if stripped:
       yield line_no, stripped
@@ -245,7 +260,7 @@ def _parse_jsonl_line(raw_line: str, line_no: int, file: str) -> dict[str, Any]:
     dict[str, Any]: 该行解析出的 JSON 对象。
 
   Raises:
-    LoaderError: JSON 语法错误（context 的 error_type 为 ``json_parse``）或
+    LoaderError: JSON 语法错误或嵌套过深（context 的 error_type 为 ``json_parse``）、
       顶层不是对象（error_type 为 ``format``）时抛出，context 携带物理行号。
   """
   try:
@@ -254,6 +269,16 @@ def _parse_jsonl_line(raw_line: str, line_no: int, file: str) -> dict[str, Any]:
     # JSONDecodeError 的行号是「行内相对行号」（跨行字符串时不为 1），
     # 这里统一用文件物理行号，避免与编辑器行号错位。
     error = _report_error(file, line_no, f"第 {line_no} 行 JSON 解析失败: {e}")
+    error.context["error_type"] = "json_parse"
+    raise error from e
+  except RecursionError as e:
+    # 深嵌套单行 JSON 同样会抛 RecursionError；它不是 JSONDecodeError 子类，
+    # 不单独捕收会击穿 LoaderError 契约（校验器也会被裸异常打断）。
+    error = _report_error(
+      file,
+      line_no,
+      f"第 {line_no} 行 JSON 嵌套过深（超出解释器递归上限），请降低嵌套层级",
+    )
     error.context["error_type"] = "json_parse"
     raise error from e
   if not isinstance(item, dict):

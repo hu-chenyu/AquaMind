@@ -134,6 +134,72 @@ class TestJsonlLoadErrors:
     assert ("expected",) in {err["loc"] for err in exc_info.value.errors()}
 
 
+class TestJsonlEdgeCases:
+  """测试 JSONL 的边界形态：行内 U+2028、BOM、CRLF、深嵌套。
+
+  回归背景（D20 复核）：``str.splitlines()`` 会按 U+2028/U+2029/U+0085
+  切分，而这些字符在 JSON 字符串里是合法内容，会被拆成两段报假错；
+  深嵌套 JSON 则抛 ``RecursionError`` 击穿 LoaderError 契约。
+  """
+
+  def test_u2028_inside_json_string_accepted(self, tmp_path: Path) -> None:
+    """JSON 字符串内的 U+2028 应原样保留，不能被当作行边界拆开。"""
+    case = (
+      '{"input": "第一行\u2028第二行", '
+      '"expected": {"type": "contains", "value": "第二行"}}'
+    )
+    path = _write(tmp_path, "u2028.jsonl", case + "\n")
+    result = validate_dataset(path)
+    # 修复前这里会报出 2 条 json_parse 假错（被切成两段）
+    assert result.ok is True
+    assert result.errors == []
+    assert load_dataset(path)[0].input == "第一行\u2028第二行"
+
+  def test_bom_jsonl_accepted(self, tmp_path: Path) -> None:
+    """带 UTF-8 BOM 的 jsonl 应正常解析（utf-8-sig 负责剥离 BOM）。"""
+    path = tmp_path / "bom.jsonl"
+    path.write_bytes(b"\xef\xbb\xbf" + (_CASE_ONE + "\n").encode("utf-8"))
+    result = validate_dataset(path)
+    assert result.ok is True
+    assert len(load_dataset(path)) == 1
+
+  def test_crlf_jsonl_accepted(self, tmp_path: Path) -> None:
+    """CRLF 行尾应被 universal newline 归一，两条用例都能加载且行号不乱。"""
+    path = tmp_path / "crlf.jsonl"
+    path.write_bytes((_CASE_ONE + "\r\n" + _CASE_TWO + "\r\n").encode("utf-8"))
+    result = validate_dataset(path)
+    assert result.ok is True
+    cases = load_dataset(path)
+    assert [case.input for case in cases] == ["1+1=?", "天空是什么颜色？"]
+
+  def test_deep_nested_json_collected_as_error(self, tmp_path: Path) -> None:
+    """≥1000 层嵌套应包装为 LoaderError/format 错误，而非让 RecursionError 击穿。
+
+    jsonl 逐行路径与 json 整体解析路径各走一条 ``except RecursionError`` 分支。
+    """
+    nested = "[" * 2000 + "]" * 2000
+    line = f'{{"input": {nested}, "expected": {{"type": "exact", "value": "x"}}}}'
+    jsonl_path = _write(tmp_path, "deep.jsonl", line + "\n")
+    result = validate_dataset(jsonl_path)
+    assert result.ok is False
+    assert len(result.errors) == 1
+    assert result.errors[0].line == 1
+    assert result.errors[0].error_type == "json_parse"
+    assert "嵌套过深" in result.errors[0].message
+    # 加载器路径同样只抛 LoaderError（不把 RecursionError 漏给调用方）
+    with pytest.raises(LoaderError) as exc_info:
+      load_dataset(jsonl_path)
+    assert "嵌套过深" in str(exc_info.value)
+
+    # 顶层数组（.json）是整体解析，无法定位到行：line 为 None、分类为 format
+    json_path = _write(tmp_path, "deep.json", "[" + line + "]\n")
+    array_result = validate_dataset(json_path)
+    assert array_result.ok is False
+    assert array_result.errors[0].error_type == "format"
+    assert array_result.errors[0].line is None
+    assert "嵌套过深" in array_result.errors[0].message
+
+
 class TestValidateJsonl:
   """测试校验器在 JSONL 上的全错误收集行为。"""
 
@@ -305,12 +371,14 @@ class TestResultStructures:
   """测试 ValidationResult / ValidationError 的结果结构。"""
 
   def test_error_fields_are_complete(self, tmp_path: Path) -> None:
-    """每条错误须含 line/error_type/message 三个字段且类型符合声明。"""
+    """每条错误须含 line/file/error_type/message 四个字段且类型符合声明。"""
     path = _write_lines(tmp_path, "cases.jsonl", [_BAD_JSON_LINE])
     result = validate_dataset(path)
     error = result.errors[0]
     assert isinstance(error, ValidationError)
     assert isinstance(error.line, int)
+    # file 用于多文件聚合时归属错误来源
+    assert error.file == str(path)
     assert error.error_type == "json_parse"
     assert isinstance(error.message, str) and error.message
 
@@ -335,3 +403,15 @@ class TestScoreTagNameTightening:
   def test_non_empty_name_accepted(self) -> None:
     """收严不应误伤正常标签名。"""
     assert ScoreTag(name="accuracy").name == "accuracy"
+
+  def test_blank_name_behavior_pinned(self) -> None:
+    """纯空白名与空串同样被拒（NonBlankStr：min_length=1 + strip 后非空）。
+
+    钉死行为：值原样保留不做 strip，仅要求「去掉空白后仍有内容」。
+    """
+    for blank in ("", " ", " \t "):
+      with pytest.raises(PydanticValidationError) as exc_info:
+        ScoreTag(name=blank)
+      assert ("name",) in {err["loc"] for err in exc_info.value.errors()}
+    # 不做归一化：带首尾空格的合法名仍按原文保留
+    assert ScoreTag(name=" accuracy ").name == " accuracy "

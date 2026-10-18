@@ -59,21 +59,26 @@ _FORMAT_BY_SUFFIX: dict[str, DatasetFormat] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ValidationError:
   """单条校验错误：坏在哪里、坏成什么、为什么坏。
 
   Attributes:
     line: 出错的物理行号（1 起始）；无法定位到行时为 None
+    file: 出错文件路径；多文件聚合校验时用于归属错误来源
     error_type: 错误分类（json_parse/format/contract）
     message: 人类可读的错误描述，含字段路径或解析器原文
 
   Notes:
     与 ``pydantic.ValidationError`` 同名但不同物：本类是一条**结果记录**，
     不会作为异常抛出，因此不会与 pydantic 的异常语义混淆。
+
+    ``kw_only=True`` 让带默认值的 ``file`` 能紧跟无默认值的 ``line``：
+    保持「行号 → 文件 → 分类 → 消息」的阅读顺序，而不必给其它字段补默认值。
   """
 
   line: int | None
+  file: str | None = None
   error_type: ValidationErrorType
   message: str
 
@@ -163,7 +168,7 @@ def validate_dataset(path: str | Path) -> ValidationResult:
     dataset_format = detect_format(file_path)
   except LoaderError as e:
     # 扩展名不支持属于「整份文件不可校验」，直接作为单条错误返回
-    return _result([ValidationError(line=None, error_type="format", message=e.message)])
+    return _result([_from_loader_error(e, str(file_path))])
 
   if dataset_format is DatasetFormat.JSONL:
     return _result(_validate_jsonl(file_path))
@@ -203,11 +208,18 @@ def _validate_jsonl(file_path: Path) -> list[ValidationError]:
   try:
     content = _read_text(file_path)
   except LoaderError as e:
-    return [ValidationError(line=e.context.get("line"), error_type="format", message=e.message)]
+    return [_from_loader_error(e, file_str)]
 
   # 与 load_cases 同口径：没有任何非空行的 jsonl 视同空文件（0 条用例不是有效测试集）
   if not content.strip():
-    return [ValidationError(line=None, error_type="format", message="用例文件为空")]
+    return [
+      ValidationError(
+        line=None,
+        file=file_str,
+        error_type="format",
+        message="用例文件为空",
+      )
+    ]
 
   errors: list[ValidationError] = []
   for line_no, raw_line in _iter_jsonl_lines(content):
@@ -215,13 +227,7 @@ def _validate_jsonl(file_path: Path) -> list[ValidationError]:
       item = _parse_jsonl_line(raw_line, line_no, file_str)
     except LoaderError as e:
       # 单行解析失败不中断：后续行继续校验，坏集一次报全
-      errors.append(
-        ValidationError(
-          line=e.context.get("line"),
-          error_type=e.context.get("error_type", "format"),
-          message=e.message,
-        )
-      )
+      errors.append(_from_loader_error(e, file_str))
       continue
     try:
       TestCase(**item)
@@ -229,6 +235,7 @@ def _validate_jsonl(file_path: Path) -> list[ValidationError]:
       errors.append(
         ValidationError(
           line=line_no,
+          file=file_str,
           error_type="contract",
           message=f"契约校验失败: {_describe_contract_error(e)}",
         )
@@ -245,20 +252,41 @@ def _validate_array_file(file_path: Path) -> list[ValidationError]:
   Returns:
     list[ValidationError]: 全部错误（空列表表示通过）。
   """
+  file_str = str(file_path)
   try:
     load_cases(file_path)
   except LoaderError as e:
-    return [ValidationError(line=e.context.get("line"), error_type="format", message=e.message)]
+    return [_from_loader_error(e, file_str)]
   except PydanticValidationError as e:
     # 整体解析拿不到「第几条」对应的源文件行，line 记为 None 而非误报
     return [
       ValidationError(
         line=None,
+        file=file_str,
         error_type="contract",
         message=f"契约校验失败: {_describe_contract_error(e)}",
       )
     ]
   return []
+
+
+def _from_loader_error(exc: LoaderError, file: str) -> ValidationError:
+  """把加载器异常转换为一条校验错误（行号/分类取自异常 context）。
+
+  Args:
+    exc: loaders 抛出的 LoaderError。
+    file: 出错文件路径。
+
+  Returns:
+    ValidationError: line/error_type 取自 context（缺省为 None/``format``），
+      message 沿用异常消息。
+  """
+  return ValidationError(
+    line=exc.context.get("line"),
+    file=file,
+    error_type=exc.context.get("error_type", "format"),
+    message=exc.message,
+  )
 
 
 def _describe_contract_error(exc: PydanticValidationError) -> str:

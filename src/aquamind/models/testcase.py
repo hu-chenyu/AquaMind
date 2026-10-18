@@ -10,6 +10,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# 输入侧复用输出侧的非空字符串约束（score 只依赖 pydantic，不反向导入本模块，
+# 故不存在循环导入）：空串/纯空白标签名在两侧应给出同一条拒绝理由。
+from .score import NonBlankStr
+
 # 期望类型的合法取值集合。用 Literal 而非裸 str：type 决定 value 的解释方式，
 # 拼错（如 "excat"）若放过，会一路飘到 M2 打分器静默产出错误分数且沿途无任何报错。
 # 与 config.Settings.log_level 用同一套 Literal 写法保持项目风格一致；
@@ -47,9 +51,10 @@ class ScoreTag(BaseModel):
   # validate_assignment：让非负约束在构造后的赋值路径上同样成立
   model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-  # min_length=1 与输出侧 Score.matched_tags 的 NonBlankStr 对齐：空串标签名
-  # 既无法命中任何评分维度，也会让「按标签聚合」的键退化成空键，属于坏输入。
-  name: str = Field(min_length=1, description="标签名，如 accuracy/consistency")
+  # 复用输出侧 Score.matched_tags 的 NonBlankStr（min_length=1 + strip 后非空）：
+  # 空串与纯空白串标签名既无法命中任何评分维度，也会让「按标签聚合」的键退化成
+  # 空键，属于坏输入。输入输出两侧共用同一条约束，避免"看起来对齐、实则不等价"。
+  name: NonBlankStr = Field(description="标签名，如 accuracy/consistency")
   weight: float = Field(default=1.0, ge=0.0, description="标签权重，须非负")
 
 
