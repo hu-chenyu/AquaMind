@@ -158,7 +158,8 @@ def _parse_yaml(content: str, file: str) -> list[dict[str, Any]]:
     list[dict[str, Any]]: 非空的用例字典列表。
 
   Raises:
-    LoaderError: 语法错误（携带 1 起始行号）、顶层非数组或文件为空时抛出。
+    LoaderError: 语法错误（携带 1 起始行号）、嵌套过深（无法定位行）、顶层非数组
+      或文件为空时抛出。
   """
   try:
     data = yaml.safe_load(content)
@@ -167,6 +168,15 @@ def _parse_yaml(content: str, file: str) -> list[dict[str, Any]]:
     mark = getattr(e, "problem_mark", None)
     line = mark.line + 1 if mark is not None else None
     raise _report_error(file, line, f"YAML 解析失败: {e}") from e
+  except RecursionError as e:
+    # 深嵌套 YAML（流样式/块样式）会耗尽解释器递归栈，RecursionError 不是
+    # YAMLError 的子类，不单独捕收会以裸异常击穿 LoaderError 契约（校验器
+    # 承诺不抛异常也会被打破）。整体解析无法定位到行，line 记 None 而非误报。
+    raise _report_error(
+      file,
+      None,
+      "YAML 嵌套过深（超出解释器递归上限），请降低嵌套层级",
+    ) from e
   return _ensure_case_list(data, file)
 
 

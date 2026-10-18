@@ -337,6 +337,28 @@ class TestValidateArrayFiles:
     assert result.errors[0].error_type == "format"
     assert result.errors[0].line == 3
 
+  def test_deep_nested_yaml_collected_as_error(self, tmp_path: Path) -> None:
+    """深嵌套 YAML 也只能抛/收集 LoaderError，不得泄漏裸 RecursionError。
+
+    YAML 侧递归发生在 PyYAML 的 Python 级解析器里（受 sys.recursionlimit 约束），
+    与 json 的 C 递归上限不同，2000 层在各支持版本上都会触发。
+    """
+    content = "[" * 2000 + "]" * 2000 + "\n"
+    path = _write(tmp_path, "deep.yaml", content)
+
+    # 校验器承诺不抛异常：能拿到结果就说明 RecursionError 已被捕收
+    result = validate_dataset(path)
+    assert result.ok is False
+    assert len(result.errors) == 1
+    # 整体解析无法定位到行，分类为 format（不是 json_parse）
+    assert result.errors[0].error_type == "format"
+    assert result.errors[0].line is None
+    assert "嵌套过深" in result.errors[0].message
+
+    with pytest.raises(LoaderError) as exc_info:
+      load_dataset(path)
+    assert "YAML 嵌套过深" in str(exc_info.value)
+
   def test_yaml_contract_error_collected(self, tmp_path: Path) -> None:
     """YAML 契约错误应归类为 contract；整体解析无法定位到行，line 为 None。"""
     result = validate_dataset(_write(tmp_path, "cases.yaml", '- input: "缺期望"\n'))

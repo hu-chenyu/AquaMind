@@ -69,16 +69,17 @@ jobs:
     # 核心期即开启依赖漏洞扫描（原计划仅维护期 T9-04 覆盖）。
     # 若出现当前无法立即升级的告警，须用 `pip-audit --ignore <VULN-ID>` 定向放行，
     # 并在此处注释登记原因与复审过期日；禁止无注释的全局忽略。
-    # 重试机制：ubuntu runner 偶发连 PyPI 被 RemoteDisconnected（非漏洞），
-    # 最多重试 3 次、每次间隔 10s；真有漏洞（exit 1）不重试直接失败。
+    # 重试口径（D20-fix2 修正）：**所有非零退出码都重试**，不再对 exit 1 提前放弃。
+    # 原因是 pip-audit 2.10.1 里「发现漏洞」与「网络错误」同为 exit 1：
+    # pypi.py 只捕 TooManyRedirects/ConnectTimeout/HTTPError，ConnectionError 家族
+    # （RemoteDisconnected 等）以未捕获异常 traceback 退出，CLI 层无兜底——
+    # 按退出码区分两者不成立，原实现的重试分支永远不会执行。
+    # 真漏洞是确定性的（同一依赖列表重试 3 次仍 exit 1），不会因重试被误放行；
+    # 网络错误则可能恢复。代价是真有漏洞时多等约 60-90s，该场景极罕见。
     run: |
      for i in 1 2 3; do
       pip-audit --timeout 30 && exit 0
       code=$?
-      if [ "$code" -eq 1 ]; then
-       echo "pip-audit found vulnerabilities (exit 1), not retrying."
-       exit 1
-      fi
       echo "pip-audit attempt $i failed (exit $code), retrying in 10s..."
       sleep 10
      done
