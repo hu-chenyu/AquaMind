@@ -261,3 +261,14 @@ docs/bug_audit_report_*.md
 # pre_release_scan.py 从此文件读取词表，仓库内不保留字面量
 #  同上，写通配而非具体文件名，避免公开词表文件的真实名字
 /.*.local
+
+# 敏感文件（防止误提交）
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+*.db
+*.sqlite
+*.sqlite3
