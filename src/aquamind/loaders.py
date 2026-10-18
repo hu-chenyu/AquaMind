@@ -1,6 +1,7 @@
-"""用例加载器：YAML/JSON 双格式解析 + TestCase 契约校验。
+"""用例加载器：YAML/JSON/JSONL 三格式解析 + TestCase 契约校验。
 
-输入约定：文件顶层为数组，每个元素是一条用例字典（input/expected 必填，
+输入约定：YAML/JSON 文件顶层为数组，JSONL 文件每行一个 JSON 对象（空行跳过，
+行号即物理行号），每个元素/行是一条用例字典（input/expected 必填，
 context/score_tags/weights 可选）。解析错误以 LoaderError 抛出并携带文件与行号；
 字段契约由 TestCase（pydantic）负责校验，本模块不吞契约层异常。
 """
@@ -8,6 +9,7 @@ context/score_tags/weights 可选）。解析错误以 LoaderError 抛出并携�
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -20,13 +22,15 @@ from .models import TestCase
 # 支持的扩展名集合（比较前统一转小写）
 _YAML_SUFFIXES: set[str] = {".yaml", ".yml"}
 _JSON_SUFFIXES: set[str] = {".json"}
+# JSONL：每行一个 JSON 对象，空行跳过；报错行号沿用物理行号，便于直接对照编辑器
+_JSONL_SUFFIXES: set[str] = {".jsonl"}
 
 
 def load_cases(path: str | Path) -> list[TestCase]:
-  """从 YAML/JSON 文件加载用例列表并完成契约校验。
+  """从 YAML/JSON/JSONL 文件加载用例列表并完成契约校验。
 
   Args:
-    path: 用例文件路径，支持 .yaml/.yml/.json 扩展名。
+    path: 用例文件路径，支持 .jsonl/.yaml/.yml/.json 扩展名。
 
   Returns:
     list[TestCase]: 通过 TestCase 契约校验的非空用例列表。
@@ -35,23 +39,57 @@ def load_cases(path: str | Path) -> list[TestCase]:
     LoaderError: 扩展名不支持、文件不存在、不可读、路径是目录、编码不是 UTF-8、
       解析失败、文件为空，或其他读取失败（如父路径不是目录、路径过长）时抛出。
     ValidationError: 用例字段不符合 TestCase 契约时由 pydantic 抛出，本函数不捕获。
+
+  Notes:
+    三格式共用同一套契约收口（``_build_cases``）与读取失败映射（``_read_text``），
+    差异只在「文本 → 原始字典列表」的解析环节。
   """
   file_path = Path(path)
   file_str = str(file_path)
   suffix = file_path.suffix.lower()
 
-  if suffix not in _YAML_SUFFIXES and suffix not in _JSON_SUFFIXES:
+  if (
+    suffix not in _YAML_SUFFIXES
+    and suffix not in _JSON_SUFFIXES
+    and suffix not in _JSONL_SUFFIXES
+  ):
     raise _report_error(
       file_str,
       None,
-      f"不支持的文件格式: {suffix or '(无扩展名)'}，仅支持 .yaml/.yml/.json",
+      f"不支持的文件格式: {suffix or '(无扩展名)'}，仅支持 .jsonl/.yaml/.yml/.json",
     )
 
+  content = _read_text(file_path)
+
+  if suffix in _YAML_SUFFIXES:
+    raw_items = _parse_yaml(content, file_str)
+  elif suffix in _JSON_SUFFIXES:
+    raw_items = _parse_json(content, file_str)
+  else:
+    raw_items = _parse_jsonl(content, file_str)
+  return _build_cases(raw_items, file_str)
+
+
+def _read_text(file_path: Path) -> str:
+  """以 UTF-8 读取用例文件，并把所有读取失败统一包装为 LoaderError。
+
+  Args:
+    file_path: 用例文件路径。
+
+  Returns:
+    str: 文件文本内容（若带 BOM 则已剥离）。
+
+  Raises:
+    LoaderError: 文件不存在、不可读、路径是目录、编码不是 UTF-8，或其他读取
+      失败（如父路径不是目录、路径过长）时抛出，context 携带文件路径与行号
+      （读取阶段无法定位行，line 为 None）。
+  """
+  file_str = str(file_path)
   try:
     # utf-8-sig 同时兼容「有 BOM」与「无 BOM」的纯 UTF-8 文件：YAML 侧 PyYAML
-    # 本就容忍 BOM，而 json.loads 不容忍，统一编码可消除两种格式的行为差异
+    # 本就容忍 BOM，而 json.loads 不容忍，统一编码可消除多种格式的行为差异
     # （BOM 本身是合法的 UTF-8 字符序列，剥离后不影响内容）。
-    content = file_path.read_text(encoding="utf-8-sig")
+    return file_path.read_text(encoding="utf-8-sig")
   except FileNotFoundError as e:
     raise _report_error(file_str, None, f"文件不存在: {file_str}") from e
   except PermissionError as e:
@@ -60,8 +98,8 @@ def load_cases(path: str | Path) -> list[TestCase]:
     raise _report_error(file_str, None, f"路径是目录而非文件: {file_str}") from e
   except UnicodeDecodeError as e:
     # 编码不符（如中文 Windows 默认的 GBK/GB18030）抛 UnicodeDecodeError，
-    # 它既非 OSError 也非 YAML/JSON 解析错误，必须显式包装：否则调用方
-    # 按契约只捕获 LoaderError 时会被击穿，只能拿到无法定位的编解码堆栈。
+    # 它既非 OSError 也非解析错误，必须显式包装：否则调用方按契约只捕获
+    # LoaderError 时会被击穿，只能拿到无法定位的编解码堆栈。
     encoding_error = _report_error(
       file_str,
       None,
@@ -78,11 +116,21 @@ def load_cases(path: str | Path) -> list[TestCase]:
     # 同口径的宽捕获，两处保持一致
     raise _report_error(file_str, None, f"文件读取失败: {file_str}") from e
 
-  if suffix in _YAML_SUFFIXES:
-    raw_items = _parse_yaml(content, file_str)
-  else:
-    raw_items = _parse_json(content, file_str)
 
+def _build_cases(raw_items: list[dict[Any, Any]], file: str) -> list[TestCase]:
+  """把原始用例字典列表逐条构造为 TestCase（三格式共用的契约收口）。
+
+  Args:
+    raw_items: 已通过结构校验的用例字典列表；键可能是非字符串（YAML 允许）。
+    file: 文件路径（用于错误上下文）。
+
+  Returns:
+    list[TestCase]: 与输入等长、顺序一致的契约模型列表。
+
+  Raises:
+    LoaderError: 某条用例含非字符串键、无法展开为关键字参数时抛出。
+    ValidationError: 用例字段不符合 TestCase 契约时由 pydantic 抛出，本函数不捕获。
+  """
   cases: list[TestCase] = []
   for index, item in enumerate(raw_items):
     # YAML 允许数字/布尔等非字符串键，而 TestCase(**item) 展开要求键全为 str，
@@ -90,7 +138,7 @@ def load_cases(path: str | Path) -> list[TestCase]:
     non_str_keys = [key for key in item if not isinstance(key, str)]
     if non_str_keys:
       raise _report_error(
-        file_str,
+        file,
         None,
         f"第 {index + 1} 条用例包含非字符串键 {non_str_keys}："
         "用例字段名必须是字符串",
@@ -143,6 +191,80 @@ def _parse_json(content: str, file: str) -> list[dict[str, Any]]:
     # JSONDecodeError.lineno 已是 1 起始行号，直接透传
     raise _report_error(file, e.lineno, f"JSON 解析失败: {e}") from e
   return _ensure_case_list(data, file)
+
+
+def _parse_jsonl(content: str, file: str) -> list[dict[str, Any]]:
+  """解析 JSONL 文本为用例字典列表（每行一个对象，空行跳过）。
+
+  Args:
+    content: JSONL 文本内容。
+
+  Returns:
+    list[dict[str, Any]]: 非空的用例字典列表，顺序与文件一致。
+
+  Raises:
+    LoaderError: 某行 JSON 语法错误或某行不是 JSON 对象（均携带物理行号）、
+      文件没有任何非空行时抛出。
+  """
+  items: list[dict[str, Any]] = []
+  for line_no, raw_line in _iter_jsonl_lines(content):
+    items.append(_parse_jsonl_line(raw_line, line_no, file))
+  if not items:
+    raise _report_error(file, None, "用例文件为空")
+  return items
+
+
+def _iter_jsonl_lines(content: str) -> Iterator[tuple[int, str]]:
+  """按物理行号遍历 JSONL 的非空行。
+
+  Args:
+    content: JSONL 文本内容。
+
+  Yields:
+    tuple[int, str]: (1 起始的物理行号, 去除首尾空白后的行文本)。
+
+  Notes:
+    只跳过空白行，行号仍取物理行号（不因跳过而重新编号），
+    这样报错位置与编辑器里看到的行号一一对应。
+  """
+  for line_no, raw_line in enumerate(content.splitlines(), start=1):
+    stripped = raw_line.strip()
+    if stripped:
+      yield line_no, stripped
+
+
+def _parse_jsonl_line(raw_line: str, line_no: int, file: str) -> dict[str, Any]:
+  """解析单行 JSONL 并确认其顶层是 JSON 对象。
+
+  Args:
+    raw_line: 单行文本（已去除首尾空白）。
+    line_no: 该行的物理行号（1 起始）。
+    file: 文件路径（用于错误上下文）。
+
+  Returns:
+    dict[str, Any]: 该行解析出的 JSON 对象。
+
+  Raises:
+    LoaderError: JSON 语法错误（context 的 error_type 为 ``json_parse``）或
+      顶层不是对象（error_type 为 ``format``）时抛出，context 携带物理行号。
+  """
+  try:
+    item = json.loads(raw_line)
+  except json.JSONDecodeError as e:
+    # JSONDecodeError 的行号是「行内相对行号」（跨行字符串时不为 1），
+    # 这里统一用文件物理行号，避免与编辑器行号错位。
+    error = _report_error(file, line_no, f"第 {line_no} 行 JSON 解析失败: {e}")
+    error.context["error_type"] = "json_parse"
+    raise error from e
+  if not isinstance(item, dict):
+    error = _report_error(
+      file,
+      line_no,
+      f"第 {line_no} 行必须是 JSON 对象（mapping），实际类型: {type(item).__name__}",
+    )
+    error.context["error_type"] = "format"
+    raise error
+  return item
 
 
 def _ensure_case_list(data: Any, file: str) -> list[dict[Any, Any]]:

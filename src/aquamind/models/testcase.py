@@ -47,7 +47,9 @@ class ScoreTag(BaseModel):
   # validate_assignment：让非负约束在构造后的赋值路径上同样成立
   model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-  name: str = Field(description="标签名，如 accuracy/consistency")
+  # min_length=1 与输出侧 Score.matched_tags 的 NonBlankStr 对齐：空串标签名
+  # 既无法命中任何评分维度，也会让「按标签聚合」的键退化成空键，属于坏输入。
+  name: str = Field(min_length=1, description="标签名，如 accuracy/consistency")
   weight: float = Field(default=1.0, ge=0.0, description="标签权重，须非负")
 
 
