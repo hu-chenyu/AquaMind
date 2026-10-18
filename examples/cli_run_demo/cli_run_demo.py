@@ -72,7 +72,7 @@ class _SSEHandler(BaseHTTPRequestHandler):
       self._write_chunk(f"data: {payload}\n\n")
     # 结束标记：OpenAI / vLLM / Ollama 均以 [DONE] 收尾
     self._write_chunk("data: [DONE]\n\n")
-    self._write_chunk(b"") # 0 长度分片表示流结束
+    self._write_chunk(b"")  # 0 长度分片表示流结束
 
   def _write_chunk(self, text: str | bytes) -> None:
     """按 chunked 编码写出一帧。

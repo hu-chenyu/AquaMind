@@ -367,7 +367,7 @@ class TestCaseScoreLink:
       ],
     )
     tag_names = [tag.name for tag in case.score_tags]
-    assert tag_names == ["accuracy", "format"] # 输入侧标签来自同一次构造
+    assert tag_names == ["accuracy", "format"]  # 输入侧标签来自同一次构造
 
     # 模拟一次精确匹配评分：输出与期望逐字相等 → 1.0，命中全部标签
     step = ScoreStep(
@@ -555,7 +555,7 @@ class TestModelCopyGuard:
     copied_trace = trace.model_copy(update={"steps": revised_steps, "final_score": 0.75})
     assert copied_trace.final_score == 0.75 == copied_trace.steps[-1].partial_score
     assert isinstance(copied_trace.steps[-1], ScoreStep)
-    assert trace.final_score == 0.5 # 原链不受影响
+    assert trace.final_score == 0.5  # 原链不受影响
 
   def test_model_copy_preserves_frozen(self) -> None:
     """复制出的实例仍是 frozen：不能借复制换一个可变对象回来。"""
@@ -580,7 +580,7 @@ class TestCrossModelConsistency:
     trace = ScoreTrace(
       case_id="case-paired",
       steps=[ScoreStep(**_step_payload(partial_score=score.score))],
-      final_score=score.score, # 取同一取值，不重新计算
+      final_score=score.score,  # 取同一取值，不重新计算
       scorer_version="exact-1.0.0",
       timestamp=_FIXED_TS,
     )

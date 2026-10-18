@@ -48,7 +48,7 @@
 
 ── 四个通道的落盘形态 ────────────────────────────────
 [4] 请求头 Authorization: sha256:<16位摘要>
-  （sha256: 短摘要——请求头参与指纹，必须保留「换密钥即换指纹」的区分度）
+    （sha256: 短摘要——请求头参与指纹，必须保留「换密钥即换指纹」的区分度）
 [5] 请求体 api_key   : REDACTED
 [6] 响应头 Set-Cookie  : REDACTED
 [7] 响应体 access_token : REDACTED
@@ -76,9 +76,9 @@
 ## 边界（M1 已知限制）
 
 - 只对 **JSON 对象/数组载荷**做结构化脱敏。非 JSON 文本（纯文本、XML）原样
- 落盘，不会猜着替换——这类载荷需调用方自行确保不含密钥。
+  落盘，不会猜着替换——这类载荷需调用方自行确保不含密钥。
 - 敏感字段按「键名包含 key/token/secret 等模式」识别（大小写不敏感）。代价是
- `max_tokens` 这类「词里恰好含 token」的非凭据字段也会被替换——保守取向：
- 宁可多脱敏，不可漏脱敏。
+  `max_tokens` 这类「词里恰好含 token」的非凭据字段也会被替换——保守取向：
+  宁可多脱敏，不可漏脱敏。
 - 密钥零泄漏由三道闸共同保证：录制期脱敏（本演示）+ cassette 扫描脚本
- （`scripts/scan_cassette_secrets.py`）+ `.gitignore` 录制目录兜底。
+  （`scripts/scan_cassette_secrets.py`）+ `.gitignore` 录制目录兜底。

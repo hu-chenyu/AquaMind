@@ -1,18 +1,18 @@
 {
- "request_method": "POST",
- "request_url": "http://127.0.0.1:8000/v1/chat/completions",
- "request_headers": {
-  "content-type": "application/json",
-  "x-api-key": "sha256:2fe7abdcabc9dc9f"
- },
- "request_body": "{\"messages\": [{\"content\": [{\"text\": \"这张图里是什么？\", \"type\": \"text\"}, {\"image_url\": {\"url\": \"http://127.0.0.1:8000/demo-assets/water.png\"}, \"type\": \"image_url\"}], \"role\": \"user\"}, {\"content\": \"这是一张演示水样图片。\", \"role\": \"assistant\"}, {\"content\": \"再用一句话概括。\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
- "response_status_code": 200,
- "response_headers": {
-  "Content-Type": "application/json"
- },
- "response_body": "{\"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"message\": {\"content\": \"概括：一张演示水样图片。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
- "request_hash": "2864b699f341cdc2",
- "recorded_at": "2026-10-14T01:21:04.267542+00:00",
- "format_version": 2,
- "timing": null
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json",
+    "x-api-key": "sha256:2fe7abdcabc9dc9f"
+  },
+  "request_body": "{\"messages\": [{\"content\": [{\"text\": \"这张图里是什么？\", \"type\": \"text\"}, {\"image_url\": {\"url\": \"http://127.0.0.1:8000/demo-assets/water.png\"}, \"type\": \"image_url\"}], \"role\": \"user\"}, {\"content\": \"这是一张演示水样图片。\", \"role\": \"assistant\"}, {\"content\": \"再用一句话概括。\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
+  "response_status_code": 200,
+  "response_headers": {
+    "Content-Type": "application/json"
+  },
+  "response_body": "{\"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"message\": {\"content\": \"概括：一张演示水样图片。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
+  "request_hash": "2864b699f341cdc2",
+  "recorded_at": "2026-10-14T01:21:04.267542+00:00",
+  "format_version": 2,
+  "timing": null
 }

@@ -43,14 +43,14 @@ _NON_OBJECT_LINE = "[1, 2]"
 
 _SINGLE_YAML = """\
 - input: "1+1=?"
- expected:
-  type: exact
-  value: "2"
+  expected:
+    type: exact
+    value: "2"
 """
 
 _SINGLE_JSON = """\
 [
- {"input": "1+1=?", "expected": {"type": "exact", "value": "2"}}
+  {"input": "1+1=?", "expected": {"type": "exact", "value": "2"}}
 ]
 """
 
@@ -311,7 +311,7 @@ class TestValidateArrayFiles:
 
   def test_yaml_top_level_mapping_collected(self, tmp_path: Path) -> None:
     """YAML 顶层是 mapping（漏写列表符号）应被收集，行号为 None。"""
-    content = 'input: "1+1=?"\nexpected:\n type: exact\n value: "2"\n'
+    content = 'input: "1+1=?"\nexpected:\n  type: exact\n  value: "2"\n'
     result = validate_dataset(_write(tmp_path, "cases.yaml", content))
     assert result.ok is False
     assert result.errors[0].error_type == "format"

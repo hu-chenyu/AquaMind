@@ -89,13 +89,13 @@ aquamind run run.json     # 发起一次流式补全，实时输出到终端
 ```yaml
 # cases.yaml
 - input: "水的沸点是多少摄氏度？"
- expected:
-  type: contains   # exact / regex / contains / judge
-  value: "100"
- score_tags:
-  - name: accuracy
- weights:
-  accuracy: 1.0
+  expected:
+    type: contains   # exact / regex / contains / judge
+    value: "100"
+  score_tags:
+    - name: accuracy
+  weights:
+    accuracy: 1.0
 ```
 
 加载用例并调用一次 OpenAI 兼容端点（加载失败与契约不符会带文件与行号报错）：
@@ -111,9 +111,9 @@ adapter = OpenAIAdapter(base_url="http://localhost:8000/v1", model="my-model")
 
 
 async def main() -> None:
-  for case in cases:
-    resp = await adapter.acomplete([{"role": "user", "content": case.input}])
-    print(case.input, "->", resp.content)
+    for case in cases:
+        resp = await adapter.acomplete([{"role": "user", "content": case.input}])
+        print(case.input, "->", resp.content)
 
 
 asyncio.run(main())

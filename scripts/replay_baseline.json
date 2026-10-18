@@ -1,447 +1,447 @@
 {
- "generated_at": "2026-10-06T03:24:52.985881+00:00",
- "task": "M1-D06a/b/c VCR 录制回放一致率、时序录制与调度基线",
- "scope": "文本层面（请求指纹/响应体还原精度）+ 时序录制层面（chunk 到达时刻录制精度）+ 时序调度层面（按录下时刻调度回放的实测偏差、倍率折算、旧格式瞬时回放）",
- "environment": {
-  "python": "3.11.9",
-  "platform": "Windows",
-  "release": "10",
-  "machine": "AMD64",
-  "timer_note": "时序偏差为真实测量值：Windows 传统定时器粒度约 15.6ms，Linux 通常 1ms 量级，故偏差字段随机器与运行波动属正常"
- },
- "summary": {
-  "recorded_requests": 11,
-  "replay_succeeded": 11,
-  "unmatched_requests": 0,
-  "status_code_match_rate": 1.0,
-  "body_match_rate": 1.0,
-  "text_match_rate": 1.0,
-  "request_hash_stability_rate": 1.0,
-  "hash_length": 16
- },
- "timing_recording": {
-  "streaming_scenarios": 3,
-  "non_streaming_scenarios": 8,
-  "total_chunks": 12,
-  "avg_chunk_chars": 3.92,
-  "min_chunk_chars": 1,
-  "max_chunk_chars": 7,
-  "first_chunk_zero_rate": 1.0,
-  "arrival_monotonic_rate": 1.0,
-  "three_decimal_precision_rate": 1.0,
-  "max_decimals_observed": 3,
-  "json_round_trip_rate": 1.0,
-  "chunks_concat_matches_content_rate": 1.0
- },
- "hash_cost": {
-  "iterations_per_case": 100,
-  "total_measured_calls": 1100,
-  "avg_compute_ms": 0.0054,
-  "max_compute_ms": 0.0077
- },
- "timing_replay": {
-  "speeds_measured": [
-   1.0,
-   2.0,
-   0.5
-  ],
-  "streaming_scenarios": 3,
-  "all_text_match": true,
-  "by_speed": {
-   "1.0x": {
-    "speed": 1.0,
-    "scenarios": 3,
-    "chunks": 12,
-    "text_match_rate": 1.0,
-    "total_scheduled_span_ms": 1612.126,
-    "total_elapsed_ms": 1613.796,
-    "elapsed_over_scheduled_ratio": 1.001,
-    "max_deviation_ms": 0.796,
-    "mean_deviation_ms": 0.33,
-    "deviations_ms": [
-     0.0,
-     0.219,
-     0.397,
-     0.506,
-     0.0,
-     0.796,
-     0.433,
-     0.0,
-     0.099,
-     0.739,
-     0.137,
-     0.628
-    ],
-    "cases": [
-     {
-      "request_hash": "70e99cc2b638347c",
-      "chunk_count": 4,
-      "scheduled_span_ms": 400.0,
-      "elapsed_ms": 400.545,
-      "max_deviation_ms": 0.506,
-      "mean_deviation_ms": 0.281,
-      "text_match": true
-     },
-     {
-      "request_hash": "f5639a17dec417c4",
-      "chunk_count": 3,
-      "scheduled_span_ms": 800.0,
-      "elapsed_ms": 800.467,
-      "max_deviation_ms": 0.796,
-      "mean_deviation_ms": 0.41,
-      "text_match": true
-     },
-     {
-      "request_hash": "f47f1ea10fc2001a",
-      "chunk_count": 5,
-      "scheduled_span_ms": 412.126,
-      "elapsed_ms": 412.783,
-      "max_deviation_ms": 0.739,
-      "mean_deviation_ms": 0.321,
-      "text_match": true
-     }
-    ]
-   },
-   "2.0x": {
-    "speed": 2.0,
-    "scenarios": 3,
-    "chunks": 12,
-    "text_match_rate": 1.0,
-    "total_scheduled_span_ms": 806.063,
-    "total_elapsed_ms": 807.172,
-    "elapsed_over_scheduled_ratio": 1.0014,
-    "max_deviation_ms": 0.681,
-    "mean_deviation_ms": 0.197,
-    "deviations_ms": [
-     0.0,
-     0.148,
-     0.348,
-     0.681,
-     0.0,
-     0.191,
-     0.233,
-     0.0,
-     0.111,
-     0.397,
-     0.137,
-     0.116
-    ],
-    "cases": [
-     {
-      "request_hash": "70e99cc2b638347c",
-      "chunk_count": 4,
-      "scheduled_span_ms": 200.0,
-      "elapsed_ms": 200.706,
-      "max_deviation_ms": 0.681,
-      "mean_deviation_ms": 0.294,
-      "text_match": true
-     },
-     {
-      "request_hash": "f5639a17dec417c4",
-      "chunk_count": 3,
-      "scheduled_span_ms": 400.0,
-      "elapsed_ms": 400.259,
-      "max_deviation_ms": 0.233,
-      "mean_deviation_ms": 0.141,
-      "text_match": true
-     },
-     {
-      "request_hash": "f47f1ea10fc2001a",
-      "chunk_count": 5,
-      "scheduled_span_ms": 206.063,
-      "elapsed_ms": 206.207,
-      "max_deviation_ms": 0.397,
-      "mean_deviation_ms": 0.152,
-      "text_match": true
-     }
-    ]
-   },
-   "0.5x": {
-    "speed": 0.5,
-    "scenarios": 3,
-    "chunks": 12,
-    "text_match_rate": 1.0,
-    "total_scheduled_span_ms": 3224.252,
-    "total_elapsed_ms": 3225.665,
-    "elapsed_over_scheduled_ratio": 1.0004,
-    "max_deviation_ms": 0.56,
-    "mean_deviation_ms": 0.291,
-    "deviations_ms": [
-     0.0,
-     0.379,
-     0.56,
-     0.444,
-     0.0,
-     0.363,
-     0.342,
-     0.0,
-     0.378,
-     0.263,
-     0.336,
-     0.43
-    ],
-    "cases": [
-     {
-      "request_hash": "70e99cc2b638347c",
-      "chunk_count": 4,
-      "scheduled_span_ms": 800.0,
-      "elapsed_ms": 800.576,
-      "max_deviation_ms": 0.56,
-      "mean_deviation_ms": 0.346,
-      "text_match": true
-     },
-     {
-      "request_hash": "f5639a17dec417c4",
-      "chunk_count": 3,
-      "scheduled_span_ms": 1600.0,
-      "elapsed_ms": 1600.379,
-      "max_deviation_ms": 0.363,
-      "mean_deviation_ms": 0.235,
-      "text_match": true
-     },
-     {
-      "request_hash": "f47f1ea10fc2001a",
-      "chunk_count": 5,
-      "scheduled_span_ms": 824.252,
-      "elapsed_ms": 824.711,
-      "max_deviation_ms": 0.43,
-      "mean_deviation_ms": 0.281,
-      "text_match": true
-     }
-    ]
-   }
+  "generated_at": "2026-10-06T03:24:52.985881+00:00",
+  "task": "M1-D06a/b/c VCR 录制回放一致率、时序录制与调度基线",
+  "scope": "文本层面（请求指纹/响应体还原精度）+ 时序录制层面（chunk 到达时刻录制精度）+ 时序调度层面（按录下时刻调度回放的实测偏差、倍率折算、旧格式瞬时回放）",
+  "environment": {
+    "python": "3.11.9",
+    "platform": "Windows",
+    "release": "10",
+    "machine": "AMD64",
+    "timer_note": "时序偏差为真实测量值：Windows 传统定时器粒度约 15.6ms，Linux 通常 1ms 量级，故偏差字段随机器与运行波动属正常"
   },
-  "instant_replay": {
-   "legacy_timing_none": {
-    "instant": true,
-    "chunk_count": 1,
-    "sleep_calls": 0,
-    "no_sleep": true,
-    "sleep_probe_control_calls": 3,
-    "elapsed_ms": 0.019,
-    "no_sleep_within_ceiling": true,
-    "text_matches_play": true,
-    "max_deviation_ms": 0.0
-   },
-   "empty_timing": {
-    "instant": true,
-    "chunk_count": 1,
-    "sleep_calls": 0,
-    "no_sleep": true,
-    "sleep_probe_control_calls": 3,
-    "elapsed_ms": 0.011,
-    "no_sleep_within_ceiling": true,
-    "text_matches_play": true,
-    "max_deviation_ms": 0.0
-   }
+  "summary": {
+    "recorded_requests": 11,
+    "replay_succeeded": 11,
+    "unmatched_requests": 0,
+    "status_code_match_rate": 1.0,
+    "body_match_rate": 1.0,
+    "text_match_rate": 1.0,
+    "request_hash_stability_rate": 1.0,
+    "hash_length": 16
   },
-  "speed_guard": {
-   "checked": 4,
-   "all_rejected": true,
-   "cases": [
-    {
-     "speed": "0.0",
-     "rejected": true
+  "timing_recording": {
+    "streaming_scenarios": 3,
+    "non_streaming_scenarios": 8,
+    "total_chunks": 12,
+    "avg_chunk_chars": 3.92,
+    "min_chunk_chars": 1,
+    "max_chunk_chars": 7,
+    "first_chunk_zero_rate": 1.0,
+    "arrival_monotonic_rate": 1.0,
+    "three_decimal_precision_rate": 1.0,
+    "max_decimals_observed": 3,
+    "json_round_trip_rate": 1.0,
+    "chunks_concat_matches_content_rate": 1.0
+  },
+  "hash_cost": {
+    "iterations_per_case": 100,
+    "total_measured_calls": 1100,
+    "avg_compute_ms": 0.0054,
+    "max_compute_ms": 0.0077
+  },
+  "timing_replay": {
+    "speeds_measured": [
+      1.0,
+      2.0,
+      0.5
+    ],
+    "streaming_scenarios": 3,
+    "all_text_match": true,
+    "by_speed": {
+      "1.0x": {
+        "speed": 1.0,
+        "scenarios": 3,
+        "chunks": 12,
+        "text_match_rate": 1.0,
+        "total_scheduled_span_ms": 1612.126,
+        "total_elapsed_ms": 1613.796,
+        "elapsed_over_scheduled_ratio": 1.001,
+        "max_deviation_ms": 0.796,
+        "mean_deviation_ms": 0.33,
+        "deviations_ms": [
+          0.0,
+          0.219,
+          0.397,
+          0.506,
+          0.0,
+          0.796,
+          0.433,
+          0.0,
+          0.099,
+          0.739,
+          0.137,
+          0.628
+        ],
+        "cases": [
+          {
+            "request_hash": "70e99cc2b638347c",
+            "chunk_count": 4,
+            "scheduled_span_ms": 400.0,
+            "elapsed_ms": 400.545,
+            "max_deviation_ms": 0.506,
+            "mean_deviation_ms": 0.281,
+            "text_match": true
+          },
+          {
+            "request_hash": "f5639a17dec417c4",
+            "chunk_count": 3,
+            "scheduled_span_ms": 800.0,
+            "elapsed_ms": 800.467,
+            "max_deviation_ms": 0.796,
+            "mean_deviation_ms": 0.41,
+            "text_match": true
+          },
+          {
+            "request_hash": "f47f1ea10fc2001a",
+            "chunk_count": 5,
+            "scheduled_span_ms": 412.126,
+            "elapsed_ms": 412.783,
+            "max_deviation_ms": 0.739,
+            "mean_deviation_ms": 0.321,
+            "text_match": true
+          }
+        ]
+      },
+      "2.0x": {
+        "speed": 2.0,
+        "scenarios": 3,
+        "chunks": 12,
+        "text_match_rate": 1.0,
+        "total_scheduled_span_ms": 806.063,
+        "total_elapsed_ms": 807.172,
+        "elapsed_over_scheduled_ratio": 1.0014,
+        "max_deviation_ms": 0.681,
+        "mean_deviation_ms": 0.197,
+        "deviations_ms": [
+          0.0,
+          0.148,
+          0.348,
+          0.681,
+          0.0,
+          0.191,
+          0.233,
+          0.0,
+          0.111,
+          0.397,
+          0.137,
+          0.116
+        ],
+        "cases": [
+          {
+            "request_hash": "70e99cc2b638347c",
+            "chunk_count": 4,
+            "scheduled_span_ms": 200.0,
+            "elapsed_ms": 200.706,
+            "max_deviation_ms": 0.681,
+            "mean_deviation_ms": 0.294,
+            "text_match": true
+          },
+          {
+            "request_hash": "f5639a17dec417c4",
+            "chunk_count": 3,
+            "scheduled_span_ms": 400.0,
+            "elapsed_ms": 400.259,
+            "max_deviation_ms": 0.233,
+            "mean_deviation_ms": 0.141,
+            "text_match": true
+          },
+          {
+            "request_hash": "f47f1ea10fc2001a",
+            "chunk_count": 5,
+            "scheduled_span_ms": 206.063,
+            "elapsed_ms": 206.207,
+            "max_deviation_ms": 0.397,
+            "mean_deviation_ms": 0.152,
+            "text_match": true
+          }
+        ]
+      },
+      "0.5x": {
+        "speed": 0.5,
+        "scenarios": 3,
+        "chunks": 12,
+        "text_match_rate": 1.0,
+        "total_scheduled_span_ms": 3224.252,
+        "total_elapsed_ms": 3225.665,
+        "elapsed_over_scheduled_ratio": 1.0004,
+        "max_deviation_ms": 0.56,
+        "mean_deviation_ms": 0.291,
+        "deviations_ms": [
+          0.0,
+          0.379,
+          0.56,
+          0.444,
+          0.0,
+          0.363,
+          0.342,
+          0.0,
+          0.378,
+          0.263,
+          0.336,
+          0.43
+        ],
+        "cases": [
+          {
+            "request_hash": "70e99cc2b638347c",
+            "chunk_count": 4,
+            "scheduled_span_ms": 800.0,
+            "elapsed_ms": 800.576,
+            "max_deviation_ms": 0.56,
+            "mean_deviation_ms": 0.346,
+            "text_match": true
+          },
+          {
+            "request_hash": "f5639a17dec417c4",
+            "chunk_count": 3,
+            "scheduled_span_ms": 1600.0,
+            "elapsed_ms": 1600.379,
+            "max_deviation_ms": 0.363,
+            "mean_deviation_ms": 0.235,
+            "text_match": true
+          },
+          {
+            "request_hash": "f47f1ea10fc2001a",
+            "chunk_count": 5,
+            "scheduled_span_ms": 824.252,
+            "elapsed_ms": 824.711,
+            "max_deviation_ms": 0.43,
+            "mean_deviation_ms": 0.281,
+            "text_match": true
+          }
+        ]
+      }
     },
-    {
-     "speed": "-1.0",
-     "rejected": true
+    "instant_replay": {
+      "legacy_timing_none": {
+        "instant": true,
+        "chunk_count": 1,
+        "sleep_calls": 0,
+        "no_sleep": true,
+        "sleep_probe_control_calls": 3,
+        "elapsed_ms": 0.019,
+        "no_sleep_within_ceiling": true,
+        "text_matches_play": true,
+        "max_deviation_ms": 0.0
+      },
+      "empty_timing": {
+        "instant": true,
+        "chunk_count": 1,
+        "sleep_calls": 0,
+        "no_sleep": true,
+        "sleep_probe_control_calls": 3,
+        "elapsed_ms": 0.011,
+        "no_sleep_within_ceiling": true,
+        "text_matches_play": true,
+        "max_deviation_ms": 0.0
+      }
     },
-    {
-     "speed": "nan",
-     "rejected": true
+    "speed_guard": {
+      "checked": 4,
+      "all_rejected": true,
+      "cases": [
+        {
+          "speed": "0.0",
+          "rejected": true
+        },
+        {
+          "speed": "-1.0",
+          "rejected": true
+        },
+        {
+          "speed": "nan",
+          "rejected": true
+        },
+        {
+          "speed": "inf",
+          "rejected": true
+        }
+      ]
     },
-    {
-     "speed": "inf",
-     "rejected": true
+    "hash_guard": {
+      "tampered_hash_rejected": true,
+      "error_type": "ReplayError"
     }
-   ]
   },
-  "hash_guard": {
-   "tampered_hash_rejected": true,
-   "error_type": "ReplayError"
-  }
- },
- "cases": [
-  {
-   "index": 1,
-   "label": "GET 无请求体",
-   "method": "GET",
-   "matched": true,
-   "request_hash": "40e8ac3f4b79037f",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0041,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 2,
-   "label": "POST 中文 body",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "ee6f8b2478f448c0",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0052,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 3,
-   "label": "POST 英文 body",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "9d619eb3b3de0d09",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0048,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 4,
-   "label": "POST 中文 + emoji body（带 authorization）",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "2017f8a4ec672ed7",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0077,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 5,
-   "label": "POST 大 token 预算（带 x-api-key）",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "45baa86254609da0",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0055,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 6,
-   "label": "GET 中文查询串（bytes 响应体）",
-   "method": "GET",
-   "matched": true,
-   "request_hash": "072ab104078f5977",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.004,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 7,
-   "label": "DELETE 无响应体",
-   "method": "DELETE",
-   "matched": true,
-   "request_hash": "2c659f8e9e98043e",
-   "recorded_status_code": 204,
-   "replayed_status_code": 204,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.004,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 8,
-   "label": "POST 非 2xx 响应",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "f52784208caf8db0",
-   "recorded_status_code": 503,
-   "replayed_status_code": 503,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0052,
-   "streaming": false,
-   "timing_is_none": true
-  },
-  {
-   "index": 9,
-   "label": "POST 流式响应（4 chunk，起点 0ms）",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "70e99cc2b638347c",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0054,
-   "streaming": true,
-   "chunk_count": 4,
-   "first_arrival_ms": 0.0,
-   "last_arrival_ms": 400.0,
-   "arrival_monotonic": true,
-   "max_decimals": 1,
-   "timing_round_trip_ok": true
-  },
-  {
-   "index": 10,
-   "label": "POST 流式响应（3 chunk，起点非 0ms）",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "f5639a17dec417c4",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0067,
-   "streaming": true,
-   "chunk_count": 3,
-   "first_arrival_ms": 0.0,
-   "last_arrival_ms": 800.0,
-   "arrival_monotonic": true,
-   "max_decimals": 1,
-   "timing_round_trip_ok": true
-  },
-  {
-   "index": 11,
-   "label": "POST 流式响应（5 chunk，亚毫秒时刻 + 中英混排）",
-   "method": "POST",
-   "matched": true,
-   "request_hash": "f47f1ea10fc2001a",
-   "recorded_status_code": 200,
-   "replayed_status_code": 200,
-   "status_code_match": true,
-   "body_match": true,
-   "text_match": true,
-   "hash_compute_ms": 0.0067,
-   "streaming": true,
-   "chunk_count": 5,
-   "first_arrival_ms": 0.0,
-   "last_arrival_ms": 412.126,
-   "arrival_monotonic": true,
-   "max_decimals": 3,
-   "timing_round_trip_ok": true
-  }
- ]
+  "cases": [
+    {
+      "index": 1,
+      "label": "GET 无请求体",
+      "method": "GET",
+      "matched": true,
+      "request_hash": "40e8ac3f4b79037f",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0041,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 2,
+      "label": "POST 中文 body",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "ee6f8b2478f448c0",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0052,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 3,
+      "label": "POST 英文 body",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "9d619eb3b3de0d09",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0048,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 4,
+      "label": "POST 中文 + emoji body（带 authorization）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "2017f8a4ec672ed7",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0077,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 5,
+      "label": "POST 大 token 预算（带 x-api-key）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "45baa86254609da0",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0055,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 6,
+      "label": "GET 中文查询串（bytes 响应体）",
+      "method": "GET",
+      "matched": true,
+      "request_hash": "072ab104078f5977",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.004,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 7,
+      "label": "DELETE 无响应体",
+      "method": "DELETE",
+      "matched": true,
+      "request_hash": "2c659f8e9e98043e",
+      "recorded_status_code": 204,
+      "replayed_status_code": 204,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.004,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 8,
+      "label": "POST 非 2xx 响应",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "f52784208caf8db0",
+      "recorded_status_code": 503,
+      "replayed_status_code": 503,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0052,
+      "streaming": false,
+      "timing_is_none": true
+    },
+    {
+      "index": 9,
+      "label": "POST 流式响应（4 chunk，起点 0ms）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "70e99cc2b638347c",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0054,
+      "streaming": true,
+      "chunk_count": 4,
+      "first_arrival_ms": 0.0,
+      "last_arrival_ms": 400.0,
+      "arrival_monotonic": true,
+      "max_decimals": 1,
+      "timing_round_trip_ok": true
+    },
+    {
+      "index": 10,
+      "label": "POST 流式响应（3 chunk，起点非 0ms）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "f5639a17dec417c4",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0067,
+      "streaming": true,
+      "chunk_count": 3,
+      "first_arrival_ms": 0.0,
+      "last_arrival_ms": 800.0,
+      "arrival_monotonic": true,
+      "max_decimals": 1,
+      "timing_round_trip_ok": true
+    },
+    {
+      "index": 11,
+      "label": "POST 流式响应（5 chunk，亚毫秒时刻 + 中英混排）",
+      "method": "POST",
+      "matched": true,
+      "request_hash": "f47f1ea10fc2001a",
+      "recorded_status_code": 200,
+      "replayed_status_code": 200,
+      "status_code_match": true,
+      "body_match": true,
+      "text_match": true,
+      "hash_compute_ms": 0.0067,
+      "streaming": true,
+      "chunk_count": 5,
+      "first_arrival_ms": 0.0,
+      "last_arrival_ms": 412.126,
+      "arrival_monotonic": true,
+      "max_decimals": 3,
+      "timing_round_trip_ok": true
+    }
+  ]
 }

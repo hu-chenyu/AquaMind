@@ -1,17 +1,17 @@
 {
- "request_method": "POST",
- "request_url": "http://127.0.0.1:8000/v1/chat/completions",
- "request_headers": {
-  "content-type": "application/json"
- },
- "request_body": "{\"messages\": [{\"content\": \"你是一个离线演示助手。\", \"role\": \"system\"}, {\"content\": \"第一轮：介绍一下你自己\", \"role\": \"user\"}, {\"content\": \"我是演示助手。\", \"role\": \"assistant\"}, {\"content\": \"第二轮：用一句话总结上面的对话\", \"role\": \"user\"}], \"model\": \"demo-model\", \"temperature\": 0.2}",
- "response_status_code": 200,
- "response_headers": {
-  "Content-Type": "application/json"
- },
- "response_body": "{\"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"message\": {\"content\": \"第二轮答复：以上是两轮问答的演示对话。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
- "request_hash": "1dc20b537098e0a7",
- "recorded_at": "2026-10-14T01:21:04.261517+00:00",
- "format_version": 2,
- "timing": null
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json"
+  },
+  "request_body": "{\"messages\": [{\"content\": \"你是一个离线演示助手。\", \"role\": \"system\"}, {\"content\": \"第一轮：介绍一下你自己\", \"role\": \"user\"}, {\"content\": \"我是演示助手。\", \"role\": \"assistant\"}, {\"content\": \"第二轮：用一句话总结上面的对话\", \"role\": \"user\"}], \"model\": \"demo-model\", \"temperature\": 0.2}",
+  "response_status_code": 200,
+  "response_headers": {
+    "Content-Type": "application/json"
+  },
+  "response_body": "{\"choices\": [{\"finish_reason\": \"stop\", \"index\": 0, \"message\": {\"content\": \"第二轮答复：以上是两轮问答的演示对话。\", \"role\": \"assistant\"}}], \"id\": \"chatcmpl-demo-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
+  "request_hash": "1dc20b537098e0a7",
+  "recorded_at": "2026-10-14T01:21:04.261517+00:00",
+  "format_version": 2,
+  "timing": null
 }

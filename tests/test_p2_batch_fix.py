@@ -40,7 +40,7 @@ def _case(**overrides: object) -> TestCase:
     "expected": ExpectedSpec(type="exact", value="y"),
   }
   payload.update(overrides)
-  return TestCase(**payload) # type: ignore[arg-type]
+  return TestCase(**payload)  # type: ignore[arg-type]
 
 
 def _adapter(transport: httpx.AsyncBaseTransport) -> OpenAIAdapter:
@@ -186,7 +186,7 @@ class TestP2Fix4AdapterTypeError:
     """裸 TypeError 会击穿「调用方只需 except AdapterError」的契约，必须被包装。"""
     adapter = _adapter(_ok_transport())
     with pytest.raises(AdapterError) as excinfo:
-      asyncio.run(adapter.acomplete(messages)) # type: ignore[arg-type]
+      asyncio.run(adapter.acomplete(messages))  # type: ignore[arg-type]
     assert "序列化" in excinfo.value.message, f"{label} 未被正确包装"
 
   def test_context_carries_original_error_type(self) -> None:

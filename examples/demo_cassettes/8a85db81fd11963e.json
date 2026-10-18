@@ -1,17 +1,17 @@
 {
- "request_method": "POST",
- "request_url": "http://127.0.0.1:8000/v1/chat/completions",
- "request_headers": {
-  "content-type": "application/json"
- },
- "request_body": "{\"messages\": [{\"content\": \"上海今天天气怎么样？\", \"role\": \"user\"}], \"model\": \"demo-model\", \"stream\": false, \"tools\": [{\"function\": {\"description\": \"查询指定城市的天气（演示用，不发起真实调用）\", \"name\": \"get_weather\", \"parameters\": {\"properties\": {\"city\": {\"description\": \"城市名\", \"type\": \"string\"}, \"unit\": {\"description\": \"温度单位\", \"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}, \"type\": \"function\"}]}",
- "response_status_code": 200,
- "response_headers": {
-  "Content-Type": "application/json"
- },
- "response_body": "{\"choices\": [{\"finish_reason\": \"tool_calls\", \"index\": 0, \"message\": {\"content\": \"\", \"role\": \"assistant\", \"tool_calls\": [{\"function\": {\"arguments\": \"{\\\"city\\\": \\\"上海\\\", \\\"unit\\\": \\\"celsius\\\"}\", \"name\": \"get_weather\"}, \"id\": \"call_demo_0001\", \"index\": 0, \"type\": \"function\"}]}}], \"id\": \"chatcmpl-demo-tool-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
- "request_hash": "8a85db81fd11963e",
- "recorded_at": "2026-10-14T01:21:04.264026+00:00",
- "format_version": 2,
- "timing": null
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json"
+  },
+  "request_body": "{\"messages\": [{\"content\": \"上海今天天气怎么样？\", \"role\": \"user\"}], \"model\": \"demo-model\", \"stream\": false, \"tools\": [{\"function\": {\"description\": \"查询指定城市的天气（演示用，不发起真实调用）\", \"name\": \"get_weather\", \"parameters\": {\"properties\": {\"city\": {\"description\": \"城市名\", \"type\": \"string\"}, \"unit\": {\"description\": \"温度单位\", \"type\": \"string\"}}, \"required\": [\"city\"], \"type\": \"object\"}}, \"type\": \"function\"}]}",
+  "response_status_code": 200,
+  "response_headers": {
+    "Content-Type": "application/json"
+  },
+  "response_body": "{\"choices\": [{\"finish_reason\": \"tool_calls\", \"index\": 0, \"message\": {\"content\": \"\", \"role\": \"assistant\", \"tool_calls\": [{\"function\": {\"arguments\": \"{\\\"city\\\": \\\"上海\\\", \\\"unit\\\": \\\"celsius\\\"}\", \"name\": \"get_weather\"}, \"id\": \"call_demo_0001\", \"index\": 0, \"type\": \"function\"}]}}], \"id\": \"chatcmpl-demo-tool-0001\", \"model\": \"demo-model\", \"object\": \"chat.completion\"}",
+  "request_hash": "8a85db81fd11963e",
+  "recorded_at": "2026-10-14T01:21:04.264026+00:00",
+  "format_version": 2,
+  "timing": null
 }

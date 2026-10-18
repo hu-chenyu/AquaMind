@@ -4,7 +4,7 @@
 
 1. **`CallableAdapter`**——把一个本地同步函数包装成统一异步适配器（CI 零 key 的主力）；
 2. **`OpenAIAdapter`**——展示 `base_url` / `api_key` / `model` / `timeout` 的配置方式，
-  并通过注入 `httpx.MockTransport` 在零网络的前提下跑通完整链路；
+    并通过注入 `httpx.MockTransport` 在零网络的前提下跑通完整链路；
 3. **错误分类**——429 / 401 / 5xx / 超时在适配器层一律收敛为 `AdapterError`；
 4. **并发语义**——同步 SUT 被 `asyncio.to_thread` 卸载到线程池，并发调用不被串行化。
 
@@ -26,8 +26,8 @@
 ## 注意事项
 
 - **本示例不触真实 API，不需要任何 API 密钥**（CI 零 key）。OpenAI 适配器一侧通过注入
- `httpx.MockTransport` 替换传输层，**真实执行**构造请求 → 发请求 → 解析响应 → 归一这条链路，
- 只是在最后一跳不落网络。换成真实端点时只需去掉 `transport` 参数，其余调用代码不变。
+  `httpx.MockTransport` 替换传输层，**真实执行**构造请求 → 发请求 → 解析响应 → 归一这条链路，
+  只是在最后一跳不落网络。换成真实端点时只需去掉 `transport` 参数，其余调用代码不变。
 - 脚本里的 `_PLACEHOLDER_KEY` 是**占位串**，不是真实凭据。
 
 ## 一条容易踩的坑：错误消息安全 ≠ context 安全
@@ -37,7 +37,7 @@
 
 ```text
 str = 'OpenAI API 返回 HTTP 500（响应体 17 字符，详见 context.response_body）
-    (context keys: [adapter, url, status_code, response_body])'
+        (context keys: [adapter, url, status_code, response_body])'
 ```
 
 但 **`exc.context` 本身带着取值**（上面的 `response_body` 就是端点回显的正文）。

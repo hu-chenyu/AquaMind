@@ -24,7 +24,7 @@
 ## 注意事项
 
 - **本示例不触真实 API，不需要任何 API 密钥**（CI 零 key）。全部用例文件写在
- 系统临时目录（`%TEMP%\aquamind-loader-demo-*`），退出时自动清理，跑完 `git status` 保持干净。
+  系统临时目录（`%TEMP%\aquamind-loader-demo-*`），退出时自动清理，跑完 `git status` 保持干净。
 - 示例覆盖四类坏数据，各自对应一条不同的校验路径：
 
 | 坏数据 | 抛出的异常 | 为什么不是另一类 |
@@ -39,7 +39,7 @@
 `load_cases()` 的 docstring 明确声明「本模块不吞契约层异常」。这不是实现疏忽，而是刻意的边界划分：
 
 - **`LoaderError`**——文件层面：扩展名不支持、文件不存在/不可读、编码不是 UTF-8、
- YAML/JSON 语法错误、顶层不是非空数组。`context` 里带 `file` / `line` / `msg`，可直接定位到行；
+  YAML/JSON 语法错误、顶层不是非空数组。`context` 里带 `file` / `line` / `msg`，可直接定位到行；
 - **`ValidationError`**——用例层面：字段缺失、类型不符、多余字段。pydantic 自带字段定位。
 
 调用方只捕获 `LoaderError` 会漏掉契约错误；只捕获 `ValidationError` 则会把"文件根本读不了"

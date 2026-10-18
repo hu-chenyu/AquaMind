@@ -71,9 +71,9 @@ SECRET_PATTERNS = [
 # 收紧替代方案（要求更长的随机串、含特定字符集）被否决：那会让规则随阈值
 # 收紧而漏掉真实凭据——豁免是可见、可审计、可逐条撤销的，收紧不是。
 SECRET_VALUE_ALLOWLIST = {
-  "Bearer demo-token-not-a-real-credential", # examples/replay_demo/demo_record_play.py
-  "Bearer baseline-token-not-a-real-cred", # examples/replay_demo/generate_baseline.py
-  "Bearer super-secret-credential", # tests/test_replay.py，脱敏用例的输入夹具
+  "Bearer demo-token-not-a-real-credential",  # examples/replay_demo/demo_record_play.py
+  "Bearer baseline-token-not-a-real-cred",  # examples/replay_demo/generate_baseline.py
+  "Bearer super-secret-credential",  # tests/test_replay.py，脱敏用例的输入夹具
 }
 
 

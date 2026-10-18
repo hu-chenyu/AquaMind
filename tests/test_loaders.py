@@ -18,40 +18,40 @@ from aquamind.models import TestCase
 
 _SINGLE_YAML = """\
 - input: "1+1=?"
- expected:
-  type: exact
-  value: "2"
+  expected:
+    type: exact
+    value: "2"
 """
 
 _SINGLE_JSON = """\
 [
- {"input": "1+1=?", "expected": {"type": "exact", "value": "2"}}
+  {"input": "1+1=?", "expected": {"type": "exact", "value": "2"}}
 ]
 """
 
 _MULTI_YAML = """\
 - input: "1+1=?"
- expected:
-  type: exact
-  value: "2"
+  expected:
+    type: exact
+    value: "2"
 - input: "天空是什么颜色？"
- context:
-  lang: zh
- expected:
-  type: contains
-  value: "蓝"
- weights:
-  accuracy: 0.8
+  context:
+    lang: zh
+  expected:
+    type: contains
+    value: "蓝"
+  weights:
+    accuracy: 0.8
 """
 
 _MULTI_JSON = """\
 [
- {"input": "1+1=?", "expected": {"type": "exact", "value": "2"}},
- {
-  "input": "天空是什么颜色？",
-  "expected": {"type": "contains", "value": "蓝"},
-  "score_tags": [{"name": "accuracy", "weight": 0.9}]
- }
+  {"input": "1+1=?", "expected": {"type": "exact", "value": "2"}},
+  {
+    "input": "天空是什么颜色？",
+    "expected": {"type": "contains", "value": "蓝"},
+    "score_tags": [{"name": "accuracy", "weight": 0.9}]
+  }
 ]
 """
 
@@ -59,9 +59,9 @@ _MULTI_JSON = """\
 # 内容取中文用例，确保 GBK 与 UTF-8 字节序列必然不同。
 _GBK_YAML = """\
 - input: "天空是什么颜色？"
- expected:
-  type: contains
-  value: "蓝"
+  expected:
+    type: contains
+    value: "蓝"
 """
 
 _GBK_JSON = """\
@@ -125,9 +125,9 @@ class TestLoadErrors:
     """坏 YAML 应抛 LoaderError，context 携带 1 起始的出错行号。"""
     content = (
       '- input: "1+1=?"\n'
-      " expected:\n"
-      "  type: exact\n"
-      "  value: [1, 2\n"
+      "  expected:\n"
+      "    type: exact\n"
+      "    value: [1, 2\n"
     )
     with pytest.raises(LoaderError) as exc_info:
       load_cases(_write_yaml(tmp_path, content))
@@ -232,7 +232,7 @@ class TestContractPropagation:
 
   def test_missing_required_field_propagates(self, tmp_path: Path) -> None:
     """用例缺必填字段 input 时，ValidationError 应由 pydantic 抛出而非被包装。"""
-    content = '- expected:\n  type: exact\n  value: "2"\n'
+    content = '-  expected:\n    type: exact\n    value: "2"\n'
     with pytest.raises(ValidationError) as exc_info:
       load_cases(_write_yaml(tmp_path, content))
     assert "input" in str(exc_info.value)
@@ -243,7 +243,7 @@ class TestCaseListShapeValidation:
 
   def test_yaml_top_level_mapping_rejected(self, tmp_path: Path) -> None:
     """YAML 顶层是 mapping（单条用例漏写列表符号）时应报“顶层必须是数组”。"""
-    content = 'input: "1+1=?"\nexpected:\n type: exact\n value: "2"\n'
+    content = 'input: "1+1=?"\nexpected:\n  type: exact\n  value: "2"\n'
     with pytest.raises(LoaderError) as exc_info:
       load_cases(_write_yaml(tmp_path, content))
     # 错误消息须点名实际类型，用户才能直接定位写法问题
@@ -374,10 +374,10 @@ class TestNonStringKeys:
     """整数键应抛 LoaderError，而非穿透契约的 TypeError。"""
     content = (
       '- input: "1+1=?"\n'
-      " expected:\n"
-      "  type: exact\n"
-      '  value: "2"\n'
-      " 1: 坏键\n"
+      "  expected:\n"
+      "    type: exact\n"
+      '    value: "2"\n'
+      "  1: 坏键\n"
     )
     with pytest.raises(LoaderError) as exc_info:
       load_cases(_write_yaml(tmp_path, content))
@@ -391,14 +391,14 @@ class TestNonStringKeys:
     """序号应为 1 起始：第 2 条用例含布尔键时须报“第 2 条”。"""
     content = (
       '- input: "x"\n'
-      " expected:\n"
-      "  type: exact\n"
-      '  value: "2"\n'
+      "  expected:\n"
+      "    type: exact\n"
+      '    value: "2"\n'
       "- input: y\n"
-      " expected:\n"
-      "  type: exact\n"
-      '  value: "2"\n'
-      " true: 坏键\n"
+      "  expected:\n"
+      "    type: exact\n"
+      '    value: "2"\n'
+      "  true: 坏键\n"
     )
     with pytest.raises(LoaderError) as exc_info:
       load_cases(_write_yaml(tmp_path, content))
@@ -408,10 +408,10 @@ class TestNonStringKeys:
     """字符串形式的未知键仍走 pydantic 的 extra_forbidden，不被新分支截胡。"""
     content = (
       '- input: "x"\n'
-      " expected:\n"
-      "  type: exact\n"
-      '  value: "2"\n'
-      ' "1": 坏键\n'
+      "  expected:\n"
+      "    type: exact\n"
+      '    value: "2"\n'
+      '  "1": 坏键\n'
     )
     with pytest.raises(ValidationError):
       load_cases(_write_yaml(tmp_path, content))

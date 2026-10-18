@@ -312,7 +312,7 @@ class TestConcurrency:
       async def consume(self, amount: int) -> None:
         if self.current + amount > self.limit:
           raise BudgetExceeded("naive budget exceeded")
-        await asyncio.sleep(0) # 竞态窗口：交出控制权
+        await asyncio.sleep(0)  # 竞态窗口：交出控制权
         self.current += amount
 
     naive = _NaiveBudget(limit=100)
@@ -413,9 +413,9 @@ class TestImmutability:
     """
     budget = Budget(max_tokens=100, max_cost=1.0)
     with pytest.raises(AttributeError):
-      budget.max_tokens = 5 # type: ignore[misc]
+      budget.max_tokens = 5  # type: ignore[misc]
     with pytest.raises(AttributeError):
-      budget.max_cost = 2.0 # type: ignore[misc]
+      budget.max_cost = 2.0  # type: ignore[misc]
     # 失败尝试不得留下痕迹
     assert budget.max_tokens == 100
     assert budget.max_cost == pytest.approx(1.0)
@@ -424,9 +424,9 @@ class TestImmutability:
     """只读视图同样不可赋值——用量只能由 consume 推进，不能被外部改写。"""
     budget = Budget(max_tokens=100, max_cost=1.0)
     with pytest.raises(AttributeError):
-      budget.current_tokens = 50 # type: ignore[misc]
+      budget.current_tokens = 50  # type: ignore[misc]
     with pytest.raises(AttributeError):
-      budget.remaining_tokens = 50 # type: ignore[misc]
+      budget.remaining_tokens = 50  # type: ignore[misc]
 
 
 class TestInputValidation:
@@ -447,7 +447,7 @@ class TestInputValidation:
   def test_non_numeric_max_tokens_rejected(self, bad: object) -> None:
     """非数值类型的上限必须被拒，而不是在后续比较里抛裸 TypeError。"""
     with pytest.raises(ValueError, match="max_tokens"):
-      Budget(max_tokens=bad) # type: ignore[arg-type]
+      Budget(max_tokens=bad)  # type: ignore[arg-type]
 
   def test_bool_max_tokens_rejected(self) -> None:
     """bool 是 int 子类，必须显式拒绝，否则 True 会变成「上限 1 token」。"""
@@ -486,7 +486,7 @@ class TestInputValidation:
   def test_non_numeric_max_cost_rejected(self, bad: object) -> None:
     """非数值类型的成本上限必须被拒。"""
     with pytest.raises(ValueError, match="max_cost"):
-      Budget(max_cost=bad) # type: ignore[arg-type]
+      Budget(max_cost=bad)  # type: ignore[arg-type]
 
   def test_bool_max_cost_rejected(self) -> None:
     """bool 成本上限必须被拒，否则 True 会被当成 1.0 美元。"""
@@ -505,7 +505,7 @@ class TestInputValidation:
     """token 必须是整数；浮点/字符串/布尔都不接受。"""
     budget = Budget(max_tokens=100, max_cost=1.0)
     with pytest.raises(ValueError, match="tokens"):
-      await budget.consume(bad) # type: ignore[arg-type]
+      await budget.consume(bad)  # type: ignore[arg-type]
 
   @pytest.mark.parametrize("bad", [-0.01, -1.0])
   async def test_negative_cost_rejected(self, bad: float) -> None:
@@ -526,7 +526,7 @@ class TestInputValidation:
     """非数值类型的成本必须被拒。"""
     budget = Budget(max_tokens=100, max_cost=1.0)
     with pytest.raises(ValueError, match="cost"):
-      await budget.consume(1, bad) # type: ignore[arg-type]
+      await budget.consume(1, bad)  # type: ignore[arg-type]
 
   async def test_invalid_input_leaves_ledger_untouched(self) -> None:
     """校验失败不应污染账本（校验在加锁之前完成，且先于任何写回）。"""

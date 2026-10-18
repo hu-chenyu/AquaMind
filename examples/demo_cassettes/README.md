@@ -43,7 +43,7 @@
 ```
 
 - 需要覆盖重录时加 `--force`（会改写 `recorded_at`，从而改动被 git 跟踪的文件内容；
- 只想复现场景时不要加）。
+  只想复现场景时不要加）。
 - 录制完成后脚本会**自动复扫脱敏**（第二道防线）。手动复扫命令：
 
 ```powershell
@@ -59,7 +59,7 @@ from pathlib import Path
 from aquamind.replay import Cassette, play
 
 cassette = Cassette.model_validate_json(
-  Path("examples/demo_cassettes/11342c726590f01c.json").read_text(encoding="utf-8")
+    Path("examples/demo_cassettes/11342c726590f01c.json").read_text(encoding="utf-8")
 )
 response = play(cassette)
 print(response.status_code, response.text)
@@ -73,31 +73,31 @@ print(cassette.timing) # 流式场景的 chunk 到达时序；非流式场景为
 ## 口径说明（读这几个文件前先看）
 
 1. **零网络、零真实密钥**。全部请求与响应都是本地 mock 构造的，脚本不发起任何真实
-  API 调用（CI 零 key 纪律）；文件里的凭据全是明显的占位串（`sk-demo-0001` 之类），
-  且落盘前已被录制期脱敏替换。
+    API 调用（CI 零 key 纪律）；文件里的凭据全是明显的占位串（`sk-demo-0001` 之类），
+    且落盘前已被录制期脱敏替换。
 2. **脱敏两种落盘形态并存**，与 M1-D15 的口径一致：
-  - 请求头敏感值（`authorization` / `x-api-key`）→ `sha256:<前16位摘要>`：它参与请求
-   指纹，必须保留「换密钥即换指纹」的区分度；
-  - 请求体 / 响应头 / 响应体的敏感字段 → `REDACTED`：这三处不参与指纹，直接替换即可。
+    - 请求头敏感值（`authorization` / `x-api-key`）→ `sha256:<前16位摘要>`：它参与请求
+      指纹，必须保留「换密钥即换指纹」的区分度；
+    - 请求体 / 响应头 / 响应体的敏感字段 → `REDACTED`：这三处不参与指纹，直接替换即可。
 3. **保守脱敏的副作用是真实现象，不是 bug**。敏感字段按「键名包含 key/token/secret
-  等模式」识别，因此 `a467e14649e0c0b5.json` 里 `usage` 的 `prompt_tokens` /
-  `completion_tokens` / `total_tokens` 数值也被替换成了 `REDACTED`——这些计数不是凭据，
-  但「宁可多脱敏，不可漏脱敏」是刻意选择的取向（取舍见 `docs/adr/0011-cassette-redaction.md`）。
+    等模式」识别，因此 `a467e14649e0c0b5.json` 里 `usage` 的 `prompt_tokens` /
+    `completion_tokens` / `total_tokens` 数值也被替换成了 `REDACTED`——这些计数不是凭据，
+    但「宁可多脱敏，不可漏脱敏」是刻意选择的取向（取舍见 `docs/adr/0011-cassette-redaction.md`）。
 4. **超时用 504 形态表示**。客户端侧真实超时（`httpx.TimeoutException`）根本没有 HTTP
-  响应，而 cassette 契约要求响应状态码，因此 `1e3bacfbe1e2f463.json` 取网关超时形态：
-  `504` + 空响应体 + `X-AquaMind-Demo-Failure-Mode: timeout` 标记头。该场景**不设
-  `Content-Type`**：空体没有可声明的媒体类型，真实网关的 504 空体通常也不带 JSON 类型头。
-  标记头只标识形态，不改回放语义（回放仍原样返回 504 与空体）。
+    响应，而 cassette 契约要求响应状态码，因此 `1e3bacfbe1e2f463.json` 取网关超时形态：
+    `504` + 空响应体 + `X-AquaMind-Demo-Failure-Mode: timeout` 标记头。该场景**不设
+    `Content-Type`**：空体没有可声明的媒体类型，真实网关的 504 空体通常也不带 JSON 类型头。
+    标记头只标识形态，不改回放语义（回放仍原样返回 504 与空体）。
 5. **流式分片是内容增量，不是 SSE 帧**。`timing` 里的 `text` 是该 chunk 的增量文本，
-  各片拼接后等于响应体里对应字段的值（`stream_basic` 是 `content`，`stream_tool_call`
-  是 `tool_calls[0].function.arguments`）。适配器层面的 SSE 帧切分（`data:` 行解析）
-  属 `sse` 模块的口径，不在本目录的演示范围内。
+    各片拼接后等于响应体里对应字段的值（`stream_basic` 是 `content`，`stream_tool_call`
+    是 `tool_calls[0].function.arguments`）。适配器层面的 SSE 帧切分（`data:` 行解析）
+    属 `sse` 模块的口径，不在本目录的演示范围内。
 6. **`recorded_at` 随录制时刻变化**。它不是校验点；除它之外，本目录内容在同一版本代码
-  下重录应当逐字一致（`recorded_at` 之外无随机量）。
+    下重录应当逐字一致（`recorded_at` 之外无随机量）。
 
 ## 与其他示例目录的关系
 
 - `examples/replay_demo/`：`replay` 模块的最小可运行演示（录制 → 查找 → 回放、时序录制、
- 时序调度、版本闸口）。想看**怎么用**，看那里；想看**录出来长什么样**（10 种形态的
- 现成文件），看本目录。
+  时序调度、版本闸口）。想看**怎么用**，看那里；想看**录出来长什么样**（10 种形态的
+  现成文件），看本目录。
 - `examples/redaction_demo/`：录制期脱敏的四通道演示（含明文自查与扫描脚本复跑）。

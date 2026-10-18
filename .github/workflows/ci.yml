@@ -6,145 +6,145 @@ name: CI
 # 3.13/3.14 ubuntu 探测位（continue-on-error，只观察不判红）+ PyPI 长描述门禁（相对链接 + twine check）。
 
 on:
- push:
-  branches: [main]
- pull_request:
+  push:
+    branches: [main]
+  pull_request:
 
 env:
- # 测试收集数下限（比照 TestMatrix 的 TEST_COUNT_BASELINE 做法，改动为 -lt 下限）。
- # 当前 M1 收口实收 580 条；下调此值等于承认「删掉一部分用例」，须在提交信息里说明。
- TEST_COUNT_FLOOR: "580"
+  # 测试收集数下限（比照 TestMatrix 的 TEST_COUNT_BASELINE 做法，改动为 -lt 下限）。
+  # 当前 M1 收口实收 580 条；下调此值等于承认「删掉一部分用例」，须在提交信息里说明。
+  TEST_COUNT_FLOOR: "580"
 
 jobs:
- quality:
-  name: lint-test (${{ matrix.os }} / py${{ matrix.python-version }})${{ matrix.experimental && ' [探测位·不判红]' || '' }}
-  runs-on: ${{ matrix.os }}
-  # 探测位只观察不判红：3.13/3.14 的失败不让整体 CI 变红（continue-on-error），
-  # 避免上游工具链尚未适配时阻断主线。挂 2026-11-05 观察期，到期复核通过率后再决策是否转正。
-  continue-on-error: ${{ matrix.experimental }}
-  strategy:
-   fail-fast: false
-   matrix:
-    # 必过位：3.11 双 OS 笛卡尔积。experimental 显式声明为 false，
-    # 使该键在必过组合中也有定义，避免 continue-on-error 取到未定义值。
-    os: [ubuntu-latest, windows-latest]
-    python-version: ["3.11"]
-    experimental: [false]
-    include:
-     # 探测位（仅 ubuntu，节省 CI 时间）：主探测 3.13 + 次探测 3.14
-     - os: ubuntu-latest
-      python-version: "3.13"
-      experimental: true
-     - os: ubuntu-latest
-      python-version: "3.14"
-      experimental: true
+  quality:
+    name: lint-test (${{ matrix.os }} / py${{ matrix.python-version }})${{ matrix.experimental && ' [探测位·不判红]' || '' }}
+    runs-on: ${{ matrix.os }}
+    # 探测位只观察不判红：3.13/3.14 的失败不让整体 CI 变红（continue-on-error），
+    # 避免上游工具链尚未适配时阻断主线。挂 2026-11-05 观察期，到期复核通过率后再决策是否转正。
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 必过位：3.11 双 OS 笛卡尔积。experimental 显式声明为 false，
+        # 使该键在必过组合中也有定义，避免 continue-on-error 取到未定义值。
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+        experimental: [false]
+        include:
+          # 探测位（仅 ubuntu，节省 CI 时间）：主探测 3.13 + 次探测 3.14
+          - os: ubuntu-latest
+            python-version: "3.13"
+            experimental: true
+          - os: ubuntu-latest
+            python-version: "3.14"
+            experimental: true
 
-  # Windows runner 默认 shell 为 pwsh，这里统一指定 bash（Git Bash 随 runner 内置），
-  # 保证收集数门禁脚本与 pytest 调用在两个平台上行为完全一致。
-  defaults:
-   run:
-    shell: bash
+    # Windows runner 默认 shell 为 pwsh，这里统一指定 bash（Git Bash 随 runner 内置），
+    # 保证收集数门禁脚本与 pytest 调用在两个平台上行为完全一致。
+    defaults:
+      run:
+        shell: bash
 
-  steps:
-   - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-   - name: Set up Python ${{ matrix.python-version }}
-    uses: actions/setup-python@v5
-    with:
-     python-version: ${{ matrix.python-version }}
-     cache: pip
-     cache-dependency-path: pyproject.toml
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
-   - name: Install package (editable + dev extras)
-    run: |
-     python -m pip install --upgrade pip
-     python -m pip install --upgrade setuptools
-     pip install -e ".[dev]"
-     # 加上下界与项目纪律一致：工具无上界时 CI 每次装到的都是当时最新版，
-     # 判定口径随发布漂移。本地实测版本为 2.10.1，落在 >=2,<3 内。
-     pip install "pip-audit>=2,<3"
+      - name: Install package (editable + dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools
+          pip install -e ".[dev]"
+          # 加上下界与项目纪律一致：工具无上界时 CI 每次装到的都是当时最新版，
+          # 判定口径随发布漂移。本地实测版本为 2.10.1，落在 >=2,<3 内。
+          pip install "pip-audit>=2,<3"
 
-   - name: Security audit (pip-audit)
-    # 核心期即开启依赖漏洞扫描（原计划仅维护期 T9-04 覆盖）。
-    # 若出现当前无法立即升级的告警，须用 `pip-audit --ignore <VULN-ID>` 定向放行，
-    # 并在此处注释登记原因与复审过期日；禁止无注释的全局忽略。
-    # 重试口径（D20-fix2 修正）：**所有非零退出码都重试**，不再对 exit 1 提前放弃。
-    # 原因是 pip-audit 2.10.1 里「发现漏洞」与「网络错误」同为 exit 1：
-    # pypi.py 只捕 TooManyRedirects/ConnectTimeout/HTTPError，ConnectionError 家族
-    # （RemoteDisconnected 等）以未捕获异常 traceback 退出，CLI 层无兜底——
-    # 按退出码区分两者不成立，原实现的重试分支永远不会执行。
-    # 真漏洞是确定性的（同一依赖列表重试 3 次仍 exit 1），不会因重试被误放行；
-    # 网络错误则可能恢复。代价是真有漏洞时多等约 60-90s，该场景极罕见。
-    run: |
-     for i in 1 2 3; do
-      pip-audit --timeout 30 && exit 0
-      code=$?
-      echo "pip-audit attempt $i failed (exit $code), retrying in 10s..."
-      sleep 10
-     done
-     echo "pip-audit failed after 3 attempts."
-     exit 1
+      - name: Security audit (pip-audit)
+        # 核心期即开启依赖漏洞扫描（原计划仅维护期 T9-04 覆盖）。
+        # 若出现当前无法立即升级的告警，须用 `pip-audit --ignore <VULN-ID>` 定向放行，
+        # 并在此处注释登记原因与复审过期日；禁止无注释的全局忽略。
+        # 重试口径（D20-fix2 修正）：**所有非零退出码都重试**，不再对 exit 1 提前放弃。
+        # 原因是 pip-audit 2.10.1 里「发现漏洞」与「网络错误」同为 exit 1：
+        # pypi.py 只捕 TooManyRedirects/ConnectTimeout/HTTPError，ConnectionError 家族
+        # （RemoteDisconnected 等）以未捕获异常 traceback 退出，CLI 层无兜底——
+        # 按退出码区分两者不成立，原实现的重试分支永远不会执行。
+        # 真漏洞是确定性的（同一依赖列表重试 3 次仍 exit 1），不会因重试被误放行；
+        # 网络错误则可能恢复。代价是真有漏洞时多等约 60-90s，该场景极罕见。
+        run: |
+          for i in 1 2 3; do
+            pip-audit --timeout 30 && exit 0
+            code=$?
+            echo "pip-audit attempt $i failed (exit $code), retrying in 10s..."
+            sleep 10
+          done
+          echo "pip-audit failed after 3 attempts."
+          exit 1
 
-   - name: Ruff lint
-    # scripts/ 纳入检查：pre_release_scan.py 是 tracked 公开脚本，
-    # 风格退化不应只在本地才可见。
-    # --output-format=github：把违规写成 check-run annotation（含文件/行号/规则），
-    # 这样排查不必依赖有鉴权才能下载的 step 日志。
-    run: ruff check src tests scripts --output-format=github
+      - name: Ruff lint
+        # scripts/ 纳入检查：pre_release_scan.py 是 tracked 公开脚本，
+        # 风格退化不应只在本地才可见。
+        # --output-format=github：把违规写成 check-run annotation（含文件/行号/规则），
+        # 这样排查不必依赖有鉴权才能下载的 step 日志。
+        run: ruff check src tests scripts --output-format=github
 
-   - name: Mypy strict
-    run: mypy src
+      - name: Mypy strict
+        run: mypy src
 
-   - name: Test collection floor
-    # 收集数下限门禁：防止「测试被误删」或「全部用例收集失败」时 CI 仍判绿。
-    # 用 -lt 下限而非相等，新增用例不必改此处；确需下调时须确认是刻意删用例。
-    run: |
-     count=$(pytest --collect-only -q 2>&1 | grep -oE '[0-9]+ tests? collected' | grep -oE '[0-9]+' | head -1)
-     if [ -z "$count" ]; then
-      echo "收集数门禁：未能解析到收集数（pytest --collect-only 输出异常）" >&2
-      pytest --collect-only -q 2>&1 | tail -20 >&2
-      exit 1
-     fi
-     if [ "$count" -lt "$TEST_COUNT_FLOOR" ]; then
-      echo "收集数 $count 低于下限 $TEST_COUNT_FLOOR" >&2
-      exit 1
-     fi
-     echo "收集数 $count >= 下限 $TEST_COUNT_FLOOR，通过"
+      - name: Test collection floor
+        # 收集数下限门禁：防止「测试被误删」或「全部用例收集失败」时 CI 仍判绿。
+        # 用 -lt 下限而非相等，新增用例不必改此处；确需下调时须确认是刻意删用例。
+        run: |
+          count=$(pytest --collect-only -q 2>&1 | grep -oE '[0-9]+ tests? collected' | grep -oE '[0-9]+' | head -1)
+          if [ -z "$count" ]; then
+            echo "收集数门禁：未能解析到收集数（pytest --collect-only 输出异常）" >&2
+            pytest --collect-only -q 2>&1 | tail -20 >&2
+            exit 1
+          fi
+          if [ "$count" -lt "$TEST_COUNT_FLOOR" ]; then
+            echo "收集数 $count 低于下限 $TEST_COUNT_FLOOR" >&2
+            exit 1
+          fi
+          echo "收集数 $count >= 下限 $TEST_COUNT_FLOOR，通过"
 
-   - name: Pytest + 覆盖率硬门禁
-    # 硬门禁，不再容忍退出码 5。M1 用例已入库（当前 580 条），
-    # 「未收集到测试」只应表示真实故障，不该与通过等价。
-    # D18 起覆盖率从「本地人工核对」升级为 CI 硬门禁，同一步内顺序执行两项检查：
-    #  1) 全仓覆盖率 ≥90%（--cov-fail-under=90）
-    #  2) 三个核心文件各 100%（协议/调度/并发三类最难被用例穷尽的逻辑）
-    # pytest --cov 会写出 .coverage，随后的 coverage report 直接读取，无需重跑测试。
-    # 任一检查不达标即 exit 非零，判红不放过。
-    run: |
-     pytest --cov=src/aquamind --cov-report=term-missing --cov-fail-under=90 -q
-     # 存在性守卫：三核心文件若被改名/删除，include 会仅部分匹配，其余文件仍按 100% 通过，
-     # 被改名者悄然退出 100% 保障。故先逐个确认存在，任一缺失即 exit 1。
-     for f in src/aquamind/sse.py src/aquamind/replay.py src/aquamind/budget.py; do
-      [ -f "$f" ] || { echo "核心文件缺失: $f" >&2; exit 1; }
-     done
-     coverage report \
-      --include="src/aquamind/sse.py,src/aquamind/replay.py,src/aquamind/budget.py" \
-      --fail-under=100
+      - name: Pytest + 覆盖率硬门禁
+        # 硬门禁，不再容忍退出码 5。M1 用例已入库（当前 580 条），
+        # 「未收集到测试」只应表示真实故障，不该与通过等价。
+        # D18 起覆盖率从「本地人工核对」升级为 CI 硬门禁，同一步内顺序执行两项检查：
+        #  1) 全仓覆盖率 ≥90%（--cov-fail-under=90）
+        #  2) 三个核心文件各 100%（协议/调度/并发三类最难被用例穷尽的逻辑）
+        # pytest --cov 会写出 .coverage，随后的 coverage report 直接读取，无需重跑测试。
+        # 任一检查不达标即 exit 非零，判红不放过。
+        run: |
+          pytest --cov=src/aquamind --cov-report=term-missing --cov-fail-under=90 -q
+          # 存在性守卫：三核心文件若被改名/删除，include 会仅部分匹配，其余文件仍按 100% 通过，
+          # 被改名者悄然退出 100% 保障。故先逐个确认存在，任一缺失即 exit 1。
+          for f in src/aquamind/sse.py src/aquamind/replay.py src/aquamind/budget.py; do
+            [ -f "$f" ] || { echo "核心文件缺失: $f" >&2; exit 1; }
+          done
+          coverage report \
+            --include="src/aquamind/sse.py,src/aquamind/replay.py,src/aquamind/budget.py" \
+            --fail-under=100
 
-   - name: PyPI 长描述相对链接门禁
-    # 相对链接（](./xxx)）在 PyPI 页面上会解析到 pypi.org 域名之下，必然断链。
-    # 用 git grep 精确拦截：命中即失败；零命中时 git grep 返回 1，属预期（未找到即为通过）。
-    run: |
-     if git grep -nE '\]\(\./' -- README.md; then
-      echo "README.md 含相对链接，PyPI 渲染时会断链，请改为绝对链接" >&2
-      exit 1
-     fi
-     echo "README.md 无相对链接，通过"
+      - name: PyPI 长描述相对链接门禁
+        # 相对链接（](./xxx)）在 PyPI 页面上会解析到 pypi.org 域名之下，必然断链。
+        # 用 git grep 精确拦截：命中即失败；零命中时 git grep 返回 1，属预期（未找到即为通过）。
+        run: |
+          if git grep -nE '\]\(\./' -- README.md; then
+            echo "README.md 含相对链接，PyPI 渲染时会断链，请改为绝对链接" >&2
+            exit 1
+          fi
+          echo "README.md 无相对链接，通过"
 
-   - name: PyPI 长描述渲染预检（twine check）
-    # 与上一步互补：twine check 只验长描述能否被 PyPI 渲染（markdown 合法性），
-    # 不解析 href 目标，故对断链不敏感——两者缺一不可。
-    # 构建产物落 dist/（已在 .gitignore），CI runner 上用完即弃，不影响仓库。
-    run: |
-     python -m build
-     python -m twine check dist/*
+      - name: PyPI 长描述渲染预检（twine check）
+        # 与上一步互补：twine check 只验长描述能否被 PyPI 渲染（markdown 合法性），
+        # 不解析 href 目标，故对断链不敏感——两者缺一不可。
+        # 构建产物落 dist/（已在 .gitignore），CI runner 上用完即弃，不影响仓库。
+        run: |
+          python -m build
+          python -m twine check dist/*

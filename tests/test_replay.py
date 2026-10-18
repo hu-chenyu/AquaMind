@@ -789,14 +789,14 @@ class TestPlayTimed:
     cassette = _record_timed_cassette(tmp_path, _FAST_CHUNKS)
     for bad_value in ("fast", None, [1.0]):
       with pytest.raises(ReplayError, match="speed 必须为数值类型") as excinfo:
-        # type: ignore[arg-type]——刻意绕过静态标注，模拟命令行/JSON
+         # type: ignore[arg-type]——刻意绕过静态标注，模拟命令行/JSON
         # 传来的运行时脏值，正是这条防线要覆盖的场景
-        play_timed(cassette, bad_value) # type: ignore[arg-type]
+        play_timed(cassette, bad_value)  # type: ignore[arg-type]
       # context 带上类型名，排障时不必回去数引号里的值
       assert excinfo.value.context["speed_type"] == type(bad_value).__name__
     # 非数值路径不携带 request_hash：它校验的是「值本身不可用」，与请求无关
     with pytest.raises(ReplayError) as excinfo:
-      play_timed(cassette, "fast") # type: ignore[arg-type]
+      play_timed(cassette, "fast")  # type: ignore[arg-type]
     assert "request_hash" not in excinfo.value.context
 
   def test_deviation_is_empty_before_any_chunk_is_consumed(self, tmp_path: Path) -> None:
@@ -1372,13 +1372,13 @@ class TestCassetteRedaction:
     object_id = id(original)
 
     record(_make_request(body=json.dumps(original)), _make_response(), tmp_path)
-    assert original == snapshot # record() 全链路不改写入参
+    assert original == snapshot  # record() 全链路不改写入参
     assert id(original) == object_id
 
     redacted = _redact_sensitive_fields(original)
     assert redacted == {"api_key": "REDACTED", "profile": {"name": "alice"}, "ok": True}
-    assert redacted is not original # 返回新对象而非原地替换
-    assert original == snapshot # 直接调用同样不改写
+    assert redacted is not original  # 返回新对象而非原地替换
+    assert original == snapshot  # 直接调用同样不改写
 
   def test_sensitive_field_matching_is_case_insensitive(self, tmp_path: Path) -> None:
     """键名大小写不敏感：Api_Key / API-KEY / Authorization 都应命中。"""

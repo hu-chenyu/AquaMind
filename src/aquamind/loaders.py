@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 # PyYAML 未随包提供 py.typed 类型存根，故对其导入做定向忽略；如需完整类型检查可安装 types-PyYAML。
-import yaml # type: ignore[import-untyped]
+import yaml  # type: ignore[import-untyped]
 
 from .exceptions import LoaderError
 from .models import TestCase

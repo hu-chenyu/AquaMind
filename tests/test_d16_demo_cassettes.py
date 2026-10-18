@@ -155,7 +155,7 @@ def test_demo_cassettes_are_exactly_ten_and_valid(scenarios: tuple[Any, ...]) ->
     assert path.is_file(), f"{scenario.scenario_id} 的 cassette 缺失：{path.name}"
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    cassette = Cassette.model_validate(payload) # 契约校验：字段/类型/取值范围
+    cassette = Cassette.model_validate(payload)  # 契约校验：字段/类型/取值范围
     # 文件名即请求指纹，且与文件内记录的指纹一致（否则 find_match 永远匹配不上）
     assert cassette.request_hash == request_hash == path.stem
     # 与 M1-D15 收口后的格式完全一致：v2（流式带 timing，非流式为 null）
@@ -270,7 +270,7 @@ def test_demo_cassettes_are_redacted(scenarios: tuple[Any, ...], tmp_path: Path)
   stored_request_body = json.loads(probe_payload["request_body"])
   assert stored_request_body["api_key"] == "REDACTED"
   assert stored_request_body["session_id"] == "REDACTED"
-  assert stored_request_body["model"] == "demo-model" # 非敏感字段逐字保留
+  assert stored_request_body["model"] == "demo-model"  # 非敏感字段逐字保留
   assert probe_payload["response_headers"]["Set-Cookie"] == "REDACTED"
   assert json.loads(probe_payload["response_body"])["access_token"] == "REDACTED"
 

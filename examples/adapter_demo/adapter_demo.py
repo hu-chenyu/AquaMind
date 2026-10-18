@@ -81,7 +81,7 @@ def _mock_openai_transport(content: str) -> httpx.AsyncBaseTransport:
 
   async def handler(request: httpx.Request) -> httpx.Response:
     """对任意请求返回预置的成功响应。"""
-    del request # 请求内容与本示例的断言无关，此处显式标记未使用
+    del request  # 请求内容与本示例的断言无关，此处显式标记未使用
     return httpx.Response(200, json=payload)
 
   return httpx.MockTransport(handler)

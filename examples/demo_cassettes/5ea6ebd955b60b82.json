@@ -1,19 +1,19 @@
 {
- "request_method": "POST",
- "request_url": "http://127.0.0.1:8000/v1/chat/completions",
- "request_headers": {
-  "content-type": "application/json"
- },
- "request_body": "{\"messages\": [{\"content\": \"限流场景的演示请求\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
- "response_status_code": 429,
- "response_headers": {
-  "Content-Type": "application/json",
-  "Retry-After": "1",
-  "X-RateLimit-Remaining-Requests": "0"
- },
- "response_body": "{\"error\": {\"code\": \"rate_limit_exceeded\", \"message\": \"Rate limit reached for demo-model\", \"type\": \"rate_limit_error\"}}",
- "request_hash": "5ea6ebd955b60b82",
- "recorded_at": "2026-10-14T01:21:04.265028+00:00",
- "format_version": 2,
- "timing": null
+  "request_method": "POST",
+  "request_url": "http://127.0.0.1:8000/v1/chat/completions",
+  "request_headers": {
+    "content-type": "application/json"
+  },
+  "request_body": "{\"messages\": [{\"content\": \"限流场景的演示请求\", \"role\": \"user\"}], \"model\": \"demo-model\"}",
+  "response_status_code": 429,
+  "response_headers": {
+    "Content-Type": "application/json",
+    "Retry-After": "1",
+    "X-RateLimit-Remaining-Requests": "0"
+  },
+  "response_body": "{\"error\": {\"code\": \"rate_limit_exceeded\", \"message\": \"Rate limit reached for demo-model\", \"type\": \"rate_limit_error\"}}",
+  "request_hash": "5ea6ebd955b60b82",
+  "recorded_at": "2026-10-14T01:21:04.265028+00:00",
+  "format_version": 2,
+  "timing": null
 }

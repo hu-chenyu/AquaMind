@@ -99,7 +99,7 @@ class TestCallableAdapter:
     def _returns_dict(messages: list[dict[str, str]]) -> str:
       """模拟后端返回结构体（与 content: str 契约不符）。"""
       payload = {"result": "hello", "message_count": len(messages)}
-      return payload # type: ignore[return-value]
+      return payload  # type: ignore[return-value]
 
     with pytest.raises(AdapterError) as exc_info:
       asyncio.run(CallableAdapter(_returns_dict).acomplete(_MESSAGES))
@@ -145,14 +145,14 @@ class TestBaseAdapterContract:
   def test_cannot_instantiate_base_adapter(self) -> None:
     """BaseAdapter 是抽象类，直接实例化应抛 TypeError。"""
     with pytest.raises(TypeError) as exc_info:
-      BaseAdapter() # type: ignore[abstract]
+      BaseAdapter()  # type: ignore[abstract]
     # ABC 在实例化阶段即拒绝，错误消息应指出具体类名
     assert "BaseAdapter" in str(exc_info.value)
 
   def test_subclass_must_implement_acomplete(self) -> None:
     """未实现 acomplete 的子类在实例化阶段即被 ABC 拒绝。"""
     with pytest.raises(TypeError) as exc_info:
-      _IncompleteAdapter() # type: ignore[abstract]
+      _IncompleteAdapter()  # type: ignore[abstract]
     assert "_IncompleteAdapter" in str(exc_info.value)
 
 
@@ -219,7 +219,7 @@ class TestCallableAdapterConcurrency:
       await asyncio.sleep(0)
       return "异步输出"
 
-    adapter = CallableAdapter(_async_sut) # type: ignore[arg-type]
+    adapter = CallableAdapter(_async_sut)  # type: ignore[arg-type]
     response = asyncio.run(adapter.acomplete(_MESSAGES))
     assert response.content == "异步输出"
 
@@ -232,7 +232,7 @@ class TestCallableAdapterConcurrency:
       """异步本地 SUT。"""
       return "异步输出"
 
-    adapter = CallableAdapter(_async_sut) # type: ignore[arg-type]
+    adapter = CallableAdapter(_async_sut)  # type: ignore[arg-type]
     asyncio.run(adapter.acomplete(_MESSAGES))
     leaked = [w for w in recwarn.list if "never awaited" in str(w.message)]
     assert leaked == [], f"检测到未 await 的协程: {[str(w.message) for w in leaked]}"
@@ -244,7 +244,7 @@ class TestCallableAdapterConcurrency:
       """模拟异步 SUT 故障。"""
       raise ValueError("异步后端故障")
 
-    adapter = CallableAdapter(_boom) # type: ignore[arg-type]
+    adapter = CallableAdapter(_boom)  # type: ignore[arg-type]
     with pytest.raises(AdapterError) as exc_info:
       asyncio.run(adapter.acomplete(_MESSAGES))
     assert exc_info.value.context["error_type"] == "ValueError"

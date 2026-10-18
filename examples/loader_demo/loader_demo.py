@@ -114,7 +114,7 @@ def _show_loader_error(path: Path) -> None:
   except LoaderError as exc:
     print(f" LoaderError: {exc}")
     print(f"  context: {exc.context}")
-  else: # pragma: no cover - 示例脚本的可读性分支，正常不会走到
+  else:  # pragma: no cover - 示例脚本的可读性分支，正常不会走到
     print(" 预期抛出 LoaderError，但没有")
 
 
@@ -131,7 +131,7 @@ def _show_validation_error(path: Path) -> None:
     field = ".".join(str(part) for part in first["loc"])
     print(f" ValidationError: 首个错误定位到字段 {field}")
     print(f"  原因: {first['msg']}")
-  else: # pragma: no cover - 示例脚本的可读性分支，正常不会走到
+  else:  # pragma: no cover - 示例脚本的可读性分支，正常不会走到
     print(" 预期抛出 ValidationError，但没有")
 
 
