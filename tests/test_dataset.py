@@ -172,32 +172,68 @@ class TestJsonlEdgeCases:
     cases = load_dataset(path)
     assert [case.input for case in cases] == ["1+1=?", "天空是什么颜色？"]
 
-  def test_deep_nested_json_collected_as_error(self, tmp_path: Path) -> None:
-    """≥1000 层嵌套应包装为 LoaderError/format 错误，而非让 RecursionError 击穿。
+  def test_recursion_error_wrapped_on_both_paths(
+    self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+  ) -> None:
+    """json.loads 抛 RecursionError 时，jsonl 与 json 两条路径都必须包装为 LoaderError。
 
-    jsonl 逐行路径与 json 整体解析路径各走一条 ``except RecursionError`` 分支。
+    用 monkeypatch 固定异常形态，不依赖各 Python 版本的 json 递归上限——
+    3.13+ 的 C 递归限额与 3.11 不同，真实深嵌套在哪个深度触发 RecursionError
+    会随版本漂移（探测量级足以让断言变成版本敏感）。
     """
-    nested = "[" * 2000 + "]" * 2000
-    line = f'{{"input": {nested}, "expected": {{"type": "exact", "value": "x"}}}}'
-    jsonl_path = _write(tmp_path, "deep.jsonl", line + "\n")
+
+    def _boom(_raw: str) -> object:
+      """模拟深嵌套 JSON 触发的递归溢出。"""
+      raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr("aquamind.loaders.json.loads", _boom)
+
+    # jsonl 逐行路径：物理行号照常携带，分类为 json_parse
+    jsonl_path = _write(tmp_path, "deep.jsonl", _CASE_ONE + "\n")
     result = validate_dataset(jsonl_path)
     assert result.ok is False
     assert len(result.errors) == 1
     assert result.errors[0].line == 1
     assert result.errors[0].error_type == "json_parse"
     assert "嵌套过深" in result.errors[0].message
-    # 加载器路径同样只抛 LoaderError（不把 RecursionError 漏给调用方）
     with pytest.raises(LoaderError) as exc_info:
       load_dataset(jsonl_path)
     assert "嵌套过深" in str(exc_info.value)
 
     # 顶层数组（.json）是整体解析，无法定位到行：line 为 None、分类为 format
-    json_path = _write(tmp_path, "deep.json", "[" + line + "]\n")
+    json_path = _write(tmp_path, "deep.json", _SINGLE_JSON)
     array_result = validate_dataset(json_path)
     assert array_result.ok is False
     assert array_result.errors[0].error_type == "format"
     assert array_result.errors[0].line is None
     assert "嵌套过深" in array_result.errors[0].message
+
+  def test_deep_nested_json_never_leaks_recursion_error(self, tmp_path: Path) -> None:
+    """≥1000 层真实嵌套：任何版本都不得把裸 RecursionError 抛给调用方。
+
+    与上一条的分工：这条跑真实深嵌套，只钉「契约不击穿」；具体错误分类随
+    json 递归上限的实现差异而不同（3.11 触发 RecursionError → json_parse；
+    若某版本解析成功，则由 TestCase 契约拦下 → contract），两者都合法。
+    """
+    nested = "[" * 2000 + "]" * 2000
+    line = f'{{"input": {nested}, "expected": {{"type": "exact", "value": "x"}}}}'
+    jsonl_path = _write(tmp_path, "deep.jsonl", line + "\n")
+
+    # 校验器承诺不抛异常：能拿到 ValidationResult 即说明没有裸异常击穿
+    result = validate_dataset(jsonl_path)
+    assert result.ok is False
+    assert result.errors[0].line == 1
+    assert result.errors[0].error_type in {"json_parse", "contract"}
+
+    array_result = validate_dataset(_write(tmp_path, "deep.json", "[" + line + "]\n"))
+    assert array_result.ok is False
+    assert array_result.errors[0].error_type in {"format", "contract"}
+
+    # 加载器只允许抛 LoaderError；若该版本解析成功则不抛异常，同样可接受
+    try:
+      load_dataset(jsonl_path)
+    except LoaderError as e:
+      assert "嵌套过深" in str(e)
 
 
 class TestValidateJsonl:
