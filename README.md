@@ -90,7 +90,7 @@ aquamind run run.json     # 发起一次流式补全，实时输出到终端
 # cases.yaml
 - input: "水的沸点是多少摄氏度？"
   expected:
-    type: contains   # exact / regex / contains / judge
+    type: contains   # exact / regex / contains / judge / excludes / keywords / json
     value: "100"
   score_tags:
     - name: accuracy
@@ -167,7 +167,7 @@ src/aquamind/
 | 里程碑 | 内容 | 结束时可演示的产物 |
 |---|---|---|
 | **M1 底座（Day1-18）** | 多模型适配层 + SSE 流式采集骨架 + CLI | 可回放的调用底座：两种适配可切换；错误分类全绿；CLI 退出码正确；cassette 时序回放（绝对对齐偏差 <1ms）；CI 覆盖率门禁 + 零 key 回放 |
-| **M2 功能基线（Day19-32）** | 评分器 + 用例管理 + 批量执行 + 质量基线 | 10 条用例出分与理由可复跑；评分器目标断言集（regex / contains / excludes / keywords / json，共五类；与当前契约层的四类 `exact` / `regex` / `contains` / `judge` 是不同集合）与 Judge 全绿；Agent 三层断言正确；坏 JSON 落不可判（UNJUDGEABLE） |
+| **M2 功能基线（Day19-32）** | 评分器 + 用例管理 + 批量执行 + 质量基线 | 10 条用例出分与理由可复跑；评分器目标断言集（regex / contains / excludes / keywords / json，共五类；与当前契约层的七类 `exact` / `regex` / `contains` / `judge` / `excludes` / `keywords` / `json` 是不同集合）与 Judge 全绿；Agent 三层断言正确；坏 JSON 落不可判（UNJUDGEABLE） |
 | **M3 负载引擎（Day33-52）** | 负载模型 + 性能指标 + AIMD 限流 + 参数矩阵 | 并发压测输出延迟百分位 / TPS / goodput；退化曲线 v1（mock 标定，拐点复测 ≤5%）；AIMD 升降有效；参数矩阵快照可追溯；预注册哈希入库 |
 | **M4 联动分析（Day53-76）** | 质量 × 性能联动 + S1-S8 统计 / 测量校验 + 双门禁 + 报告 | "并发下的质量变化"自包含 HTML 报告（三行人话层 + 11 码 + 五态四码端到端）；S1-S4 / S5-S8 全绿；统计三层自证（对拍 / 蒙卡 / meta） |
 | **M5 持久化与复核（Day77-86）** | SQLite 最小元数据表 + 回放复核（零 API） | 运行落库与两次运行对比（compare，case_id 不一致直接拒绝）；cassette 回放复核复算一致；三层数据源分区不混写 |

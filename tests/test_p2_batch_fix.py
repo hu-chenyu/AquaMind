@@ -3,7 +3,7 @@
 覆盖 8 项修复：
 - 修复1 weights 拒绝 NaN/inf 且 JSON 往返自洽；ScoreTag.weight、tolerance 的 NaN 回归
 - 修复2 Settings/TestCase/ExpectedSpec/ScoreTag 构造后赋值同样受约束
-- 修复3 ExpectedSpec.type 只接受 4 个合法枚举值
+- 修复3 ExpectedSpec.type 只接受 7 个合法枚举值
 - 修复4 OpenAIAdapter 把请求体序列化 TypeError 包装为 AdapterError
 - 修复5 LocalProtocolError 原生路径与名字路径结论一致且不可重试
 - 修复6 repr(exc) 不再渲染 context 取值
@@ -29,8 +29,8 @@ from aquamind.exceptions import AdapterError
 from aquamind.models import ExpectedSpec, ScoreTag, TestCase
 from aquamind.retry import ErrorKind, classify_error, is_retryable
 
-# 修复3 确认的 4 个合法 type 取值（与 ExpectedSpec.type 的 Literal 一一对应）
-_LEGAL_TYPES = ("exact", "regex", "contains", "judge")
+# 修复3 确认的 7 个合法 type 取值（与 ExpectedSpec.type 的 Literal 一一对应）
+_LEGAL_TYPES = ("exact", "regex", "contains", "judge", "excludes", "keywords", "json")
 
 
 def _case(**overrides: object) -> TestCase:
@@ -160,7 +160,7 @@ class TestP2Fix3ExpectedType:
 
   @pytest.mark.parametrize("good_type", _LEGAL_TYPES)
   def test_legal_types_accepted(self, good_type: str) -> None:
-    """4 个合法取值全部可构造（取值集合以实况为准：docstring + 仓库实际用法）。"""
+    """7 个合法取值全部可构造（取值集合以实况为准：docstring + 仓库实际用法）。"""
     assert ExpectedSpec(type=good_type, value="y").type == good_type
 
   def test_type_used_by_existing_fixtures_still_works(self) -> None:
