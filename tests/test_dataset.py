@@ -229,11 +229,15 @@ class TestJsonlEdgeCases:
     assert array_result.ok is False
     assert array_result.errors[0].error_type in {"format", "contract"}
 
-    # 加载器只允许抛 LoaderError；若该版本解析成功则不抛异常，同样可接受
+    # 加载器只有两种合法出口，都不允许漏出 RecursionError：
+    #  a) 该版本的 json 触发递归上限 → LoaderError（3.11 实测走这条）；
+    #  b) 解析成功 → input 是数组，由 TestCase 契约拦下（3.13/3.14 实测走这条）。
     try:
       load_dataset(jsonl_path)
     except LoaderError as e:
       assert "嵌套过深" in str(e)
+    except PydanticValidationError as e:
+      assert ("input",) in {err["loc"] for err in e.errors()}
 
 
 class TestValidateJsonl:
