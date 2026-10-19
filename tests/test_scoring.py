@@ -427,6 +427,11 @@ class TestRegexRedos:
       r"(ab?c)+",
       r"(\d\s?)+",
       r"(a?){2,}",
+      # 嵌套纯 ? 形态：这两条专门锁定第四分支的「| + 量词」**联合**条件。
+      # 若把第四分支退化成「子组含量词即拦」（丢掉 | 条件），它们会被误拒——
+      # 平面安全列表进不了分支四，故必须有嵌套形态的参数才能捕获该变异（M4 逃逸）。
+      r"((a?))+",
+      r"((ab?c))+",
     ],
   )
   def test_regex_safe_pattern_accepted(self, pattern: str) -> None:
