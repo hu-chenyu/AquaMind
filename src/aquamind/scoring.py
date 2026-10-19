@@ -604,12 +604,17 @@ def _parse_tool_arguments(arguments: object) -> Any:
     Any: 解析后的参数对象（通常是 dict，也可能是 list 或标量）。
 
   Raises:
-    ValueError: 无法解析为合法 JSON 时抛出（消息带解析器的位置信息）。
+    ValueError: 无法解析为合法 JSON、或嵌套过深（``json.loads`` 递归溢出）时抛出。
   """
   try:
     return json.loads(str(arguments))
   except json.JSONDecodeError as exc:
     raise ValueError(f"工具调用的 arguments 不是合法 JSON: {exc.msg}（位置 {exc.pos}）") from exc
+  except RecursionError:
+    # 与 _parse_agent_output 同口径：arguments 是**第二次**解析，深嵌套同样会触发递归
+    # 溢出（D21 在 JsonMatcher 收过这条路径，此处是第四条解析路径）。不带上原始异常
+    # 文本：各版本 json 的递归错误措辞不同，统一成稳定口径便于上层按「不可判」归类。
+    raise ValueError("工具调用的 arguments JSON 嵌套过深，无法解析")
 
 
 def _tool_calls(document: Mapping[str, Any]) -> list[tuple[Any, Any]]:
@@ -631,7 +636,8 @@ def _tool_calls(document: Mapping[str, Any]) -> list[tuple[Any, Any]]:
     list[tuple[Any, Any]]: ``(工具名, 已解析参数)`` 列表，顺序即输出顺序。
 
   Raises:
-    ValueError: 条目形状不符合 OpenAI 兼容格式，或 ``arguments`` 不是合法 JSON 时抛出。
+    ValueError: 条目形状不符合 OpenAI 兼容格式，或 ``arguments`` 非法（不是合法 JSON /
+      嵌套过深）时抛出。
   """
   raw_calls = document.get("tool_calls")
   if not isinstance(raw_calls, list):

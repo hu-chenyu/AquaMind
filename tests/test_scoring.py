@@ -799,3 +799,65 @@ class TestAgentMatcher:
       tools=["search_hotel"],
     )
     assert match_expected(output, spec) == (True, "通过")
+
+  def test_deeply_nested_arguments_raises_value_error(
+    self, monkeypatch: pytest.MonkeyPatch
+  ) -> None:
+    """arguments 二次解析遇递归溢出必须收口为 ValueError（不可判），不得裸逃逸。
+
+    arguments 是**第二次** ``json.loads``（顶层输出解析之外的第二条路径）：深嵌套的
+    参数串同样会触发 ``RecursionError``，D21 在 JsonMatcher 收过这条漏洞，这里锁住
+    Agent 侧的同一形态。用 monkeypatch 固定异常形态而非真实深嵌套——3.13/3.14 的 C
+    解析器不受 ``sys.setrecursionlimit`` 约束（D20 已实测 2000 层可解析成功），真实
+    深嵌套会让断言变成版本敏感。
+
+    只让**第二次**解析溢出：第一次是顶层输出（`_parse_agent_output`，已有同族用例），
+    若让第一次就溢出，本用例会在顶层就收口、根本走不到 arguments 那条路径。
+    """
+    real_loads = json.loads
+    calls = {"count": 0}
+
+    def _deep_on_second(raw: object) -> object:
+      """顶层解析正常返回；arguments 二次解析时才模拟递归溢出。"""
+      calls["count"] += 1
+      if calls["count"] == 1:
+        return real_loads(raw)  # type: ignore[arg-type]
+      raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr("aquamind.scoring.json.loads", _deep_on_second)
+    with pytest.raises(ValueError, match="嵌套过深") as excinfo:
+      AgentMatcher().match(
+        '{"tool_calls": [{"function": {"name": "get_weather", "arguments": "{}"}}]}',
+        _agent_spec(("get_weather", {"city": "北京"})),
+      )
+    # 必须定位到 arguments 那一次解析，而不是顶层输出的同族错误
+    assert "arguments" in str(excinfo.value)
+
+  def test_extra_arguments_keys_fail(self) -> None:
+    """参数比较是**完全相等**：实际比期望多出一个键也必须判不通过。
+
+    这条锁死「不做部分匹配」的承诺——若把判据退化成子集匹配（期望的键都在实际里就算
+    通过），「多传了参数」这个工具调用出错的主要形态会被静默放过，本用例会变绿。
+    """
+    output = _agent_output(_tool_call("get_weather", {"city": "北京", "unit": "aqi"}))
+    passed, reason = match_expected(output, _agent_spec(("get_weather", {"city": "北京"})))
+    assert passed is False
+    assert "参数不匹配" in reason
+    assert "期望={'city': '北京'}" in reason
+    # 多出来的键必须出现在「实际」一侧，便于判断是参数写多了而不是写错了
+    assert "unit" in reason
+
+  def test_same_tool_called_twice_any_match_passes(self) -> None:
+    """同一工具被调用多次时，任一次参数相等即通过（不校验调用序与调用次数）。
+
+    锁死 docstring 的口径：调用序 / 次数属顺序层（顺延 D31），参数层只问「有没有一次
+    参数完全对得上」。若判据退化成「所有同名调用都必须匹配」，本用例会从通过变不通过。
+    """
+    output = _agent_output(
+      _tool_call("get_weather", {"city": "上海"}),
+      _tool_call("get_weather", {"city": "北京"}),
+    )
+    assert match_expected(output, _agent_spec(("get_weather", {"city": "北京"}))) == (
+      True,
+      "通过",
+    )
