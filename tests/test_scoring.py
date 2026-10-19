@@ -401,6 +401,9 @@ class TestRegexRedos:
       # (a|a?)+b 在 24 个 a 上耗时 20s，呈 2^n 增长）
       r"(a|a?)+",
       r"(a|ab?)+",
+      # 交替冗余的嵌套形态：同一机制隔一层括号（实测 ((a|a?))+b 在 20 个 a 上
+      # 0.73s，呈 2^n）；不能靠把分支二回退成 [*+?] 来补，否则误伤 ((a?))+
+      r"((a|a?))+",
     ],
   )
   def test_regex_catastrophic_backtracking_detected(self, pattern: str) -> None:
