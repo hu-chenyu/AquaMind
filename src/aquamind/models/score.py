@@ -24,7 +24,7 @@ Judge 适配器（M2-D07）各自实现打分，输出统一收敛为本模块�
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Self, TypeVar
 
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -59,12 +59,84 @@ ScoreValue = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 # 用 Annotated 而非逐字段写 field_validator，让这条约束在三个模型上声明式地保持一致。
 NonBlankStr = Annotated[str, Field(min_length=1), AfterValidator(_ensure_non_blank)]
 
+# 受约束的 pydantic 模型类型参数：让 validated_model_copy 的返回类型与入参同类
+ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+def _revalidate_value(value: Any) -> Any:
+  """把 update 里的取值转成「重新校验时可被完整检查」的形态。
+
+  pydantic v2 的 ``revalidate_instances`` 默认为 ``'never'``：把一个**已构造的
+  模型实例**塞进 ``model_validate`` 时，它会被原样收下、字段一个都不重查。于是
+  ``ExpectedSpec.model_construct(type="excat")`` 这类绕过构造校验的坏实例，可以
+  经 ``model_copy(update={"expected": 坏实例})`` 直接混进用例——dict 形态被拦、
+  实例形态漏网。转成 ``model_dump()`` 的普通 dict 后重建，即可重跑全部字段校验。
+
+  只递归列表/元组，**不递归 dict**：``metadata`` / ``context`` / ``raw`` 是契约里
+  刻意保留的扩展口袋（``Any`` 承载），里面的模型实例属于调用方的自由数据，转成
+  dict 会静默改变取值类型，与「不动调用方数据」相悖；而契约自身的模型集合字段
+  （``steps`` / ``score_tags`` / ``timing``）都是列表形态，递归列表足以覆盖。
+
+  Args:
+    value: update 中的单个取值。
+
+  Returns:
+    Any: 模型实例转为 dict，列表/元组逐项转换，其余原样返回。
+  """
+  if isinstance(value, BaseModel):
+    return value.model_dump()
+  if isinstance(value, (list, tuple)):
+    return [_revalidate_value(item) for item in value]
+  return value
+
+
+def validated_model_copy(
+  model: ModelT,
+  *,
+  update: Mapping[str, Any] | None = None,
+  deep: bool = False,
+) -> ModelT:
+  """复制模型实例；带 update 时重新走完整校验，堵住 pydantic 官方后门。
+
+  pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，还会把「不属于
+  本模型的键」静默丢弃。两件事都让契约形同虚设：越界值/空值/未知字段全部能塞进
+  副本。本函数是全仓 12 个 BaseModel 的统一收口点：
+
+  - 带 update：把 update 的**原样取值**并回副本字段值后走 ``model_validate``
+    （字段约束、``model_validator``、``extra="forbid"`` 全部重跑），其中模型实例
+    先经 ``_revalidate_value`` 降级为 dict，避免 ``revalidate_instances='never'``
+    把坏实例原样收下；
+  - 不带 update（None 或空字典）：保持官方纯复制语义（``deep`` 照常生效）。
+
+  Args:
+    model: 待复制的模型实例。
+    update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+    deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+  Returns:
+    ModelT: 副本；带 update 时是**重新校验过**的副本。
+
+  Raises:
+    ValidationError: update 后的字段违反契约（越界、空值、未知字段、坏嵌套实例等）
+      时抛出。
+  """
+  # 直接调用 BaseModel 的实现：经 self 调会被各模型的 model_copy 覆盖版本接住，
+  # 造成无限递归
+  copied = BaseModel.model_copy(model, update=update, deep=deep)
+  if update:
+    candidate: dict[str, Any] = {
+      **copied.__dict__,
+      **{key: _revalidate_value(value) for key, value in update.items()},
+    }
+    return model.__class__.model_validate(candidate)
+  return copied
+
 
 class ScoreStep(BaseModel):
   """评分追溯链路中的单一步骤：一次评分动作的完整留痕。
 
   Attributes:
-    scorer: 本步骤使用的评分器标识（如 exact/regex/contains/judge-xxx）
+    scorer: 本步骤使用的评分器标识（如 exact/regex/contains/excludes/keywords/json/judge-xxx）
     input_digest: 输入摘要（截断后的可读摘要，不落原始全文）
     output_digest: 输出摘要（同上，便于人工核对「评的是哪段输出」）
     partial_score: 本步骤产出的中间分，范围 0.0-1.0（与最终分同一尺度）
@@ -92,8 +164,8 @@ class ScoreStep(BaseModel):
     pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**：它把新值直接
     塞进副本，于是 ``step.model_copy(update={"partial_score": 5.0})`` 能产出一个
     越界中间分、``update={"reasoning": ""}`` 能产出空推理说明，全程无报错。
-    契约的可信度不能依赖调用方自觉，故带 update 时改走 ``model_validate``；
-    不带 update 时保持官方语义（纯复制，不做无谓的重新校验）。
+    契约的可信度不能依赖调用方自觉，故收口逻辑统一由 ``validated_model_copy``
+    承担（含嵌套模型实例的重校验）；不带 update 时保持官方纯复制语义。
 
     Args:
       update: 要覆盖的字段（None 或空字典时按纯复制处理）。
@@ -105,15 +177,7 @@ class ScoreStep(BaseModel):
     Raises:
       ValidationError: update 后的字段违反契约（越界、空值、未知字段等）时抛出。
     """
-    copied = super().model_copy(update=update, deep=deep)
-    if update:
-      # 把 update 的原样取值并回副本字段值再走完整校验（field_validator /
-      # AfterValidator / extra="forbid" 全部重跑，与直接构造等价）。
-      # 为什么不能只校验副本：model_copy 会先把「不属于本模型的键」静默丢掉，
-      # 不并回的话 extra="forbid" 就形同虚设（拼错的字段名被吞掉，与契约口径相悖）
-      candidate: dict[str, Any] = {**copied.__dict__, **update}
-      return self.__class__.model_validate(candidate)
-    return copied
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class ScoreTrace(BaseModel):
@@ -175,9 +239,9 @@ class ScoreTrace(BaseModel):
     pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，因此
     ``trace.model_copy(update={"final_score": 0.9})`` 能造出一个
     ``final_score`` 与链尾 ``partial_score`` 不一致的 ``ScoreTrace``——决策四
-    「把结论与证据焊死」这条核心不变式会被官方 API 一行撕开。故带 update 时
-    改走 ``model_validate``（``model_validator`` 随之重跑）；不带 update 时
-    保持官方语义。
+    「把结论与证据焊死」这条核心不变式会被官方 API 一行撕开。故收口逻辑统一由
+    ``validated_model_copy`` 承担（``model_validator`` 与步骤列表随之重跑，
+    坏 ``ScoreStep`` 实例也会被降级为 dict 后重校验）；不带 update 时保持官方语义。
 
     Args:
       update: 要覆盖的字段（None 或空字典时按纯复制处理）。
@@ -189,14 +253,7 @@ class ScoreTrace(BaseModel):
     Raises:
       ValidationError: update 后的字段违反契约（含破坏追溯链不变式）时抛出。
     """
-    copied = super().model_copy(update=update, deep=deep)
-    if update:
-      # 把 update 的原样取值并回副本字段值再走完整校验：步骤列表在此重新校验为
-      # ScoreStep，追溯链不变式（final_score = 链尾中间分）在此重新成立；
-      # 并回也是为了让未知键落到 model_validate 的 extra="forbid" 上
-      candidate: dict[str, Any] = {**copied.__dict__, **update}
-      return self.__class__.model_validate(candidate)
-    return copied
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class Score(BaseModel):
@@ -221,7 +278,9 @@ class Score(BaseModel):
   # 且 judge 类标识带模型名后缀（judge-gpt-4o-mini），Literal 枚举会把扩展
   # 权限锁死在契约层（与 ExpectedSpec.type 用 Literal 的分工不同——那里
   # type 决定 value 的解释方式，取值集合必须封闭）
-  scorer: NonBlankStr = Field(description="评分器标识，如 exact/regex/judge-gpt-4o-mini")
+  scorer: NonBlankStr = Field(
+    description="评分器标识，如 exact/regex/contains/excludes/keywords/json/judge-gpt-4o-mini"
+  )
   passed: bool = Field(description="是否通过（由评分器按自身口径的阈值判定）")
   matched_tags: list[NonBlankStr] = Field(
     default_factory=list, description="命中的评分标签名（对应 TestCase.score_tags 的 name）"
@@ -244,8 +303,8 @@ class Score(BaseModel):
     pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，于是
     ``score.model_copy(update={"score": 5.0, "reason": ""})`` 能产出一个越界
     分数 + 空理由的 ``Score``，全程无报错——这正是决策三「产出即终态」要防的
-    分叉入口。故带 update 时改走 ``model_validate``；不带 update 时保持官方
-    语义（纯复制，不做无谓的重新校验）。
+    分叉入口。故收口逻辑统一由 ``validated_model_copy`` 承担；不带 update 时
+    保持官方纯复制语义。
 
     Args:
       update: 要覆盖的字段（None 或空字典时按纯复制处理）。
@@ -257,11 +316,4 @@ class Score(BaseModel):
     Raises:
       ValidationError: update 后的字段违反契约（越界分数、空理由、未知字段等）时抛出。
     """
-    copied = super().model_copy(update=update, deep=deep)
-    if update:
-      # 把 update 的原样取值并回副本字段值再走完整校验：分数范围、非空白理由、
-      # extra="forbid" 全部重跑，与直接构造等价；并回也是为了让未知键落到
-      # model_validate 的 extra="forbid" 上（model_copy 会静默丢弃未知键）
-      candidate: dict[str, Any] = {**copied.__dict__, **update}
-      return self.__class__.model_validate(candidate)
-    return copied
+    return validated_model_copy(self, update=update, deep=deep)

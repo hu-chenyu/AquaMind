@@ -4,7 +4,9 @@
 - 六类匹配器（exact / regex / contains / excludes / keywords / json）的通过与失败
   分支，以及「用例写错」（空子串、非法正则、非法 JSON、期望值类型不对）时必须抛
   ``ValueError`` 而非返回 False；
-- ``match_expected`` 按 type 分发、未注册类型的防御性报错；
+- 边界加固（D21 收尾）：None 期望值、空正则、灾难性回溯预检、JSON 路径键非字符串、
+  深嵌套 JSON 的 ``RecursionError`` 收口；
+- ``match_expected`` 按 type 分发、未注册类型的防御性报错、``tolerance`` 契约预留；
 - 输入侧三模型（TestCase / ExpectedSpec / ScoreTag）的 ``model_copy(update=...)``
   收口：带 update 走完整校验，越界值/未知字段/非法嵌套一律被拒；
 - 契约层 ``ExpectedType`` 的七类合法取值与非法取值拦截。
@@ -61,6 +63,14 @@ class TestExactMatcher:
   def test_non_string_value_is_compared_as_text(self) -> None:
     """用例里写 ``value: 100``（YAML 数字）应与输出 '100' 判为相等。"""
     assert ExactMatcher().match("100", _spec("exact", 100)) == (True, "通过")
+
+  def test_empty_expected_matches_empty_response(self) -> None:
+    """空串 exact 是合法断言（「输出确实为空」是可判定的确定事实）。
+
+    与 contains/excludes 拦空串的口径不同：那两类的空串断言恒真/恒假、不含被测
+    信号；而空输出本身是一条有信息量的期望。
+    """
+    assert ExactMatcher().match("", _spec("exact", "")) == (True, "通过")
 
 
 class TestRegexMatcher:
@@ -153,6 +163,13 @@ class TestKeywordsMatcher:
     """逗号分隔字符串应被解析为多关键词，两侧空白被去掉。"""
     passed, _ = KeywordsMatcher().match("alpha beta", _spec("keywords", "alpha, beta"))
     assert passed is True
+
+  def test_tuple_keywords_accepted(self) -> None:
+    """元组形态与列表同义（程序内构造用例时可能给出 tuple）。"""
+    assert KeywordsMatcher().match("alpha beta", _spec("keywords", ("alpha", "beta"))) == (
+      True,
+      "通过",
+    )
 
   def test_invalid_value_type_rejected(self) -> None:
     """既不是列表也不是字符串的期望值属传参类型错误（TypeError，非 ValueError）。"""
@@ -344,3 +361,134 @@ class TestExpectedTypeEnum:
     with pytest.raises(ValidationError) as excinfo:
       _spec(bad_type, "x")  # type: ignore[arg-type]
     assert "type" in str(excinfo.value)
+
+
+class TestNoneAndEmptyValueGuard:
+  """None / 空正则：曾静默变成有意义的字面量或被放过。"""
+
+  @pytest.mark.parametrize("type_name", ["exact", "contains"])
+  def test_none_value_raises_value_error(self, type_name: ExpectedType) -> None:
+    """``value: null`` 曾让 str(None) 变成字面量 "None"：输出含 None 即假通过。"""
+    with pytest.raises(ValueError) as excinfo:
+      match_expected("return None", _spec(type_name, None))
+    assert "不能为 None" in str(excinfo.value)
+
+  def test_keywords_none_value_raises_value_error(self) -> None:
+    """keywords 的 None 归入 ValueError（用例漏写），而不是 TypeError（类型拼错）。"""
+    with pytest.raises(ValueError) as excinfo:
+      KeywordsMatcher().match("alpha", _spec("keywords", None))
+    assert "不能为 None" in str(excinfo.value)
+
+  def test_regex_empty_pattern_raises_value_error(self) -> None:
+    """空正则恒命中任一输出，与 contains/excludes 拦空串的口径对齐。"""
+    with pytest.raises(ValueError) as excinfo:
+      RegexMatcher().match("任意输出", _spec("regex", ""))
+    assert "不能为空" in str(excinfo.value)
+
+
+class TestRegexRedos:
+  """灾难性回溯预检：危险模式编译前拦下，安全模式不得被误伤。"""
+
+  @pytest.mark.parametrize(
+    "pattern",
+    [r"(a+)+b", r"(a*)*", r"(a?){2,}", r"((a+))+", r"(?:a+)+", r"(x|a+)+$"],
+  )
+  def test_regex_catastrophic_backtracking_detected(self, pattern: str) -> None:
+    """嵌套量词在 24 个 a 上即需 1 秒以上：必须在用例执行前拒绝。"""
+    with pytest.raises(ValueError) as excinfo:
+      RegexMatcher().match("a" * 24, _spec("regex", pattern))
+    assert "灾难性回溯" in str(excinfo.value)
+
+  @pytest.mark.parametrize(
+    "pattern",
+    [r"\d+", r"^(yes|no)$", r"\(a+\)+", r"([*])+", r"(ab)+", r"a+?b", r"(\w+\s?){1,3}"],
+  )
+  def test_regex_safe_pattern_accepted(self, pattern: str) -> None:
+    """普通量词、有界重复、转义括号、字符类里的字面量量词都不得被预检误伤。"""
+    passed, _ = RegexMatcher().match("(123) aab", _spec("regex", pattern))
+    assert isinstance(passed, bool)
+
+
+class TestJsonEdgeCases:
+  """json 断言的边界：路径键类型、深嵌套不可判、顶层数组下标。"""
+
+  def test_json_non_string_path_key_raises_value_error(self) -> None:
+    """YAML 的 ``{1: x}`` 会解析出 int 键：必须报 ValueError，不能漏裸 AttributeError。"""
+    with pytest.raises(ValueError) as excinfo:
+      JsonMatcher().match('["x"]', _spec("json", {1: "x"}))
+    assert "路径必须为字符串" in str(excinfo.value)
+    assert "int" in str(excinfo.value)
+
+  def test_json_deep_nesting_raises_value_error(
+    self, monkeypatch: pytest.MonkeyPatch
+  ) -> None:
+    """深嵌套输出的 RecursionError 必须包装为 ValueError（不可判），不得裸逃逸。
+
+    用 monkeypatch 固定异常形态而非真实深嵌套：3.13/3.14 的 json 解析器不受
+    ``sys.setrecursionlimit`` 约束（D20 实测 2000 层仍能解析成功），真实深嵌套会让
+    断言变成版本敏感；本地 3.11 已实测 ``setrecursionlimit(100)`` 确实触发该异常，
+    故这里只钉「异常被收口」这一契约，不钉触发机制。
+    """
+
+    def _boom(_raw: str) -> object:
+      """模拟 json.loads 递归溢出。"""
+      raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr("aquamind.scoring.json.loads", _boom)
+    with pytest.raises(ValueError) as excinfo:
+      JsonMatcher().match("[[]]", _spec("json", {"a": 1}))
+    assert "嵌套过深" in str(excinfo.value)
+    # 原始异常保留在 __cause__ 里：上层排障仍能看出根因是递归溢出
+    assert isinstance(excinfo.value.__cause__, RecursionError)
+
+  def test_json_top_level_array_index(self) -> None:
+    """顶层数组按数字段下标断言（固化既有行为，避免将来被改成只支持对象）。"""
+    assert JsonMatcher().match("[10, 20]", _spec("json", {"1": 20})) == (True, "通过")
+
+
+class TestModelCopyNestedInstance:
+  """嵌套**实例**穿透：``revalidate_instances='never'`` 下坏实例曾被原样收下。"""
+
+  def test_model_copy_nested_bad_instance_rejected(self) -> None:
+    """model_construct 造的非法 ExpectedSpec 实例经 update 注入必须被拒。"""
+    bad = ExpectedSpec.model_construct(type="excat", value="y")
+    with pytest.raises(ValidationError):
+      _case().model_copy(update={"expected": bad})
+
+  def test_model_copy_nested_bad_instance_in_list_rejected(self) -> None:
+    """列表内的模型实例同样要重校验（score_tags 是 list[ScoreTag]）。"""
+    bad_tag = ScoreTag.model_construct(name="   ")
+    with pytest.raises(ValidationError):
+      _case().model_copy(update={"score_tags": [bad_tag]})
+
+  def test_model_copy_legal_nested_instance_accepted(self) -> None:
+    """合法实例经 update 注入仍应通过，且被重建为契约模型。"""
+    copied = _case().model_copy(update={"expected": ExpectedSpec(type="contains", value="100")})
+    assert copied.expected.type == "contains"
+    assert isinstance(copied.expected, ExpectedSpec)
+
+  def test_model_copy_deep_copy_keeps_official_semantics(self) -> None:
+    """deep=True 的纯复制路径不受收口影响：值相等、嵌套对象不共享。"""
+    case = _case(score_tags=[{"name": "accuracy"}])
+    copied = case.model_copy(deep=True)
+    assert copied == case
+    assert copied.expected is not case.expected
+
+  def test_model_copy_deep_with_update_still_validates(self) -> None:
+    """deep=True 且带 update 时同样走完整校验（不能借 deep 绕过后门）。"""
+    with pytest.raises(ValidationError):
+      _case().model_copy(update={"weights": {"accuracy": -1.0}}, deep=True)
+
+
+class TestToleranceContract:
+  """tolerance 只作契约预留：可传入、语义写在字段描述里、不改变当前判定。"""
+
+  def test_tolerance_field_accepted_and_documented(self) -> None:
+    """容差当前不参与判定：41.6 与 42 仍判不相等，但字段须写明用途与接线点。"""
+    spec = _spec("exact", "42")
+    spec.tolerance = 0.5
+    assert spec.tolerance == 0.5
+    description = ExpectedSpec.model_fields["tolerance"].description or ""
+    assert "预留用于数值类断言" in description
+    assert "D22" in description
+    assert match_expected("41.6", spec)[0] is False

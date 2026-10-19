@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # 输入侧复用输出侧的非空字符串约束（score 只依赖 pydantic，不反向导入本模块，
 # 故不存在循环导入）：空串/纯空白标签名在两侧应给出同一条拒绝理由。
-from .score import NonBlankStr
+from .score import NonBlankStr, validated_model_copy
 
 # 期望类型的合法取值集合。用 Literal 而非裸 str：type 决定 value 的解释方式，
 # 拼错（如 "excat"）若放过，会一路飘到 M2 打分器静默产出错误分数且沿途无任何报错。
@@ -32,7 +32,8 @@ class ExpectedSpec(BaseModel):
     type: 期望类型（exact/regex/contains/judge/excludes/keywords/json），
       决定 value 的解释方式
     value: 期望值，具体类型由 type 决定
-    tolerance: 数值容差，须非负；仅对数值型期望有意义
+    tolerance: 数值容差（绝对误差），须非负；当前六类确定性匹配器暂不消费，
+      接线点见 D22 结构化断言组合
   """
 
   # 严格模式：禁止未知字段，防止字段名拼写错误被静默忽略；
@@ -43,7 +44,14 @@ class ExpectedSpec(BaseModel):
     description="期望类型：exact/regex/contains/judge/excludes/keywords/json"
   )
   value: Any = Field(description="期望值，具体类型由 type 决定")
-  tolerance: float = Field(default=0.0, ge=0.0, description="数值容差，须非负")
+  tolerance: float = Field(
+    default=0.0,
+    ge=0.0,
+    description=(
+      "数值容差（绝对误差）。预留用于数值类断言：exact 数值比较、json 数值路径比较；"
+      "当前六类确定性匹配器暂不消费，接线点见 D22 结构化断言组合"
+    ),
+  )
 
   def model_copy(
     self,
@@ -56,8 +64,9 @@ class ExpectedSpec(BaseModel):
     pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，于是
     ``spec.model_copy(update={"type": "excat"})`` 能产出非法期望类型、
     ``update={"tolerance": -1.0}`` 能产出负容差，全程无报错——坏用例会一路飘到
-    评分器静默产出错误结论。故带 update 时改走 ``model_validate``；不带 update
-    时保持官方语义（纯复制，不做无谓的重新校验）。
+    评分器静默产出错误结论。故带 update 时改走 ``validated_model_copy``（其中的
+    模型实例取值会先降级为 dict 再重建，堵住 ``revalidate_instances='never'``）；
+    不带 update 时保持官方语义（纯复制，不做无谓的重新校验）。
 
     Args:
       update: 要覆盖的字段（None 或空字典时按纯复制处理）。
@@ -69,14 +78,7 @@ class ExpectedSpec(BaseModel):
     Raises:
       ValidationError: update 后的字段违反契约（非法 type、负容差、未知字段等）时抛出。
     """
-    copied = super().model_copy(update=update, deep=deep)
-    if update:
-      # 把 update 的原样取值并回副本字段值再走完整校验（Literal 枚举、ge=0.0 与
-      # extra="forbid" 全部重跑）。不能只校验副本：model_copy 会先把「不属于本模型
-      # 的键」静默丢掉，不并回的话拼错的字段名会被吞掉，与契约口径相悖
-      candidate: dict[str, Any] = {**copied.__dict__, **update}
-      return self.__class__.model_validate(candidate)
-    return copied
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class ScoreTag(BaseModel):
@@ -108,7 +110,7 @@ class ScoreTag(BaseModel):
     pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，于是
     ``tag.model_copy(update={"name": "  ", "weight": -1.0})`` 能产出一个空白标签名
     与负权重，全程无报错——按标签聚合时这类键会退化成空键，且负权重会污染加权
-    总分。故带 update 时改走 ``model_validate``；不带 update 时保持官方语义。
+    总分。故带 update 时改走 ``validated_model_copy``；不带 update 时保持官方语义。
 
     Args:
       update: 要覆盖的字段（None 或空字典时按纯复制处理）。
@@ -120,14 +122,7 @@ class ScoreTag(BaseModel):
     Raises:
       ValidationError: update 后的字段违反契约（空白标签名、负权重、未知字段等）时抛出。
     """
-    copied = super().model_copy(update=update, deep=deep)
-    if update:
-      # 把 update 的原样取值并回副本字段值再走完整校验：非空标签名（min_length +
-      # AfterValidator）与 ge=0.0 全部重跑，与直接构造等价；并回也是为了让未知键
-      # 落到 model_validate 的 extra="forbid" 上（model_copy 会静默丢弃未知键）
-      candidate: dict[str, Any] = {**copied.__dict__, **update}
-      return self.__class__.model_validate(candidate)
-    return copied
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class TestCase(BaseModel):
@@ -192,8 +187,10 @@ class TestCase(BaseModel):
     ``case.model_copy(update={"weights": {"accuracy": -1.0}})`` 能产出一条负权重
     用例、``update={"expected": {"type": "excat"}}`` 能产出非法期望类型、拼错字段名
     还会被静默丢弃，全程无报错。本类是整条评测链路的输入起点，一旦被这样改写，
-    后续执行与评分全部建立在坏数据上。故带 update 时改走 ``model_validate``；
-    不带 update 时保持官方语义（纯复制，不做无谓的重新校验）。
+    后续执行与评分全部建立在坏数据上。故带 update 时改走 ``validated_model_copy``
+    ——嵌套取值（含 ``expected`` 这类以**实例形态**传入的模型）先降级为 dict 再重建，
+    否则 ``revalidate_instances='never'`` 会把 ``model_construct`` 造的坏实例原样
+    收下；不带 update 时保持官方语义（纯复制，不做无谓的重新校验）。
 
     Args:
       update: 要覆盖的字段（None 或空字典时按纯复制处理）。
@@ -206,11 +203,4 @@ class TestCase(BaseModel):
       ValidationError: update 后的字段违反契约（负/NaN 权重、非法期望类型、
         未知字段等）时抛出。
     """
-    copied = super().model_copy(update=update, deep=deep)
-    if update:
-      # 把 update 的原样取值并回副本字段值再走完整校验：嵌套的 ExpectedSpec /
-      # ScoreTag 在此重新校验为契约模型，权重非负与 allow_inf_nan=False 一并重跑；
-      # 并回也是为了让未知键落到 model_validate 的 extra="forbid" 上
-      candidate: dict[str, Any] = {**copied.__dict__, **update}
-      return self.__class__.model_validate(candidate)
-    return copied
+    return validated_model_copy(self, update=update, deep=deep)

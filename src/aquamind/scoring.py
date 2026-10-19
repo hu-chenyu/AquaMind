@@ -8,14 +8,27 @@
 本模块负责每种 type 的判定语义。两层都不能省——契约层管「用例文件能不能读进来」，
 本模块管「读进来的期望怎么判」。
 
-失败原因与用例写错是两件事，本模块严格区分：
-- 判定不通过 → 返回 ``(False, 原因)``，属于**被测应用的表现**；
-- 期望值本身非法（空子串、非法正则、非法 JSON 路径映射等）→ 抛 ``ValueError``，
-  属于**用例写错了**；期望值的**类型**就不对（如 keywords 传了数字）→ 抛
-  ``TypeError``。若把这两类混进「不通过」，通过率统计会被用例错误污染。
+判定结果与异常是两件事，本模块严格区分四类出口：
+
+1. **判定不通过** → 返回 ``(False, 原因)``，属于**被测应用的表现**。``(bool, str)``
+   只表达「通过 / 不通过」，不承载第三种状态；
+2. **用例写错** → 抛 ``ValueError``：空期望串、空正则、非法正则、期望值形态不对
+   （如 json 断言集不是映射）、路径键不是字符串；
+3. **不可判（UNJUDGEABLE）** → 同样抛 ``ValueError``：输出侧无法按确定性规则解析
+   （非法 JSON、JSON 嵌套过深触发 ``RecursionError``）。它的成因在**输出**而非用例，
+   但与「用例写错」共用同一出口，因为两者都**不能**被计成通过或不通过——压成
+   ``False`` 会让通过率虚低，压成 ``True`` 会让它虚高。上层批量执行器应把本模块的
+   ``ValueError`` 记为不可判（与 README 的 UNJUDGEABLE 口径一致），而不是计入失败样本；
+4. **期望值类型不对** → 抛 ``TypeError``（如 keywords 传了数字），属调用方把结构拼错了，
+   与「内容非法」分开才便于定位。
 
 ``judge`` 类型需真实模型调用（M2-D07），不属确定性评分器，故未注册；``match_expected``
 遇到它会明确报「未注册」，而不是静默给出一个假分数。
+
+``ExpectedSpec.tolerance``（数值容差）当前**不参与**任何判定：六类确定性匹配器全部
+精确比较，容差是给 D22 结构化断言组合预留的字段（exact 数值比较、json 数值路径比较）。
+接线点集中在 ``match_expected``——未来由它按 type 把 tolerance 传给数值型匹配器，
+而不是散落进各匹配器的私有逻辑。
 """
 
 from __future__ import annotations
@@ -29,6 +42,29 @@ from .models.testcase import ExpectedSpec, ExpectedType
 
 # 通过时的固定说明：调用方无需区分「哪种匹配器通过」，需要细节时应看失败分支
 _PASS = "通过"
+
+
+def _require_text(value: object, type_name: str) -> str:
+  """把期望值转成字符串；None 视为用例写错，直接拦下。
+
+  ``str(None)`` 会得到字面量 ``"None"``：用例里写 ``value: null``（YAML 把空值
+  解析成 None）时，断言会悄悄变成「输出里要有 None 这几个字母」，于是
+  ``return None`` 这类输出被误判为通过。None 没有任何文本语义，必须在判定前拒绝，
+  而不是经一次隐式 str 化变成看似合法的期望值。
+
+  Args:
+    value: 用例里给出的期望值。
+    type_name: 期望类型名，仅用于错误消息里指出是哪一类断言写错了。
+
+  Returns:
+    str: 期望值转成的字符串（不做 strip，保留原文）。
+
+  Raises:
+    ValueError: 期望值为 None 时抛出。
+  """
+  if value is None:
+    raise ValueError(f"{type_name} 的期望值不能为 None：str(None) 会变成字面量 'None'")
+  return str(value)
 
 
 def _require_non_empty_text(value: object, type_name: str) -> str:
@@ -45,9 +81,9 @@ def _require_non_empty_text(value: object, type_name: str) -> str:
     str: 期望值转成的非空字符串（不做 strip，保留原文）。
 
   Raises:
-    ValueError: 期望值为空字符串时抛出。
+    ValueError: 期望值为 None 或空字符串时抛出。
   """
-  text = str(value)
+  text = _require_text(value, type_name)
   if not text:
     raise ValueError(f"{type_name} 的期望值不能为空字符串：空串断言不含任何被测信号")
   return text
@@ -67,9 +103,13 @@ def _keyword_list(value: object) -> list[str]:
     list[str]: 去空白后的关键词列表，顺序与用例一致。
 
   Raises:
-    TypeError: 期望值的**类型**既不是列表/元组也不是字符串。
-    ValueError: 归一后为空列表，或含空白项（内容非法）。
+    TypeError: 期望值的**类型**既不是列表/元组也不是字符串（None 除外，见下）。
+    ValueError: 期望值为 None，或归一后为空列表/含空白项（内容非法）。
   """
+  if value is None:
+    # None 走 ValueError 而非 TypeError：它不是「类型拼错」，而是用例里把值留空了，
+    # 与空列表同属「内容没写」，统一归入「用例写错」这一出口
+    raise ValueError("keywords 的期望值不能为 None：空值无法表达任何关键词断言")
   if isinstance(value, str):
     keywords = [item.strip() for item in value.split(",")]
   elif isinstance(value, (list, tuple)):
@@ -85,7 +125,28 @@ def _keyword_list(value: object) -> list[str]:
   return keywords
 
 
-def _resolve_path(document: Any, path: str) -> tuple[bool, Any]:
+def _path_segments(path: object) -> list[str]:
+  """把 JSON 断言路径键拆成点号分隔的段；非字符串键直接判为用例写错。
+
+  YAML 里写 ``value: {1: x}`` 会把键解析成 int，而 int 没有 ``split``——若放任
+  到 ``_resolve_path`` 内部再调用，抛出的是裸 ``AttributeError``，穿透本模块
+  「用例写错一律 ValueError」的契约，调用方无法按类型分流处理。
+
+  Args:
+    path: 用例给出的路径键（任意类型）。
+
+  Returns:
+    list[str]: 路径段列表。
+
+  Raises:
+    ValueError: 路径键不是字符串时抛出，消息里带实际类型名。
+  """
+  if isinstance(path, str):
+    return path.split(".")
+  raise ValueError(f"JSON 断言路径必须为字符串，实际类型: {type(path).__name__}")
+
+
+def _resolve_path(document: Any, path: object) -> tuple[bool, Any]:
   """按点号路径在已解析的 JSON 文档中取值。
 
   路径语法刻意保持最小：``a.b.c`` 逐层进入对象，``items.0.name`` 中的纯数字段表示
@@ -95,13 +156,16 @@ def _resolve_path(document: Any, path: str) -> tuple[bool, Any]:
 
   Args:
     document: ``json.loads`` 解析后的文档根节点。
-    path: 点号分隔的路径。
+    path: 点号分隔的路径（字符串，非字符串由 ``_path_segments`` 拦下）。
 
   Returns:
     tuple[bool, Any]: ``(True, 取到的值)`` 或 ``(False, None)``。
+
+  Raises:
+    ValueError: 路径键不是字符串时抛出。
   """
   current: Any = document
-  for segment in path.split("."):
+  for segment in _path_segments(path):
     if isinstance(current, Mapping):
       if segment not in current:
         return False, None
@@ -131,11 +195,57 @@ class ExactMatcher:
 
     Returns:
       tuple[bool, str]: ``(True, "通过")``，或 ``(False, 失败原因)``。
+
+    Raises:
+      ValueError: 期望值为 None 时抛出（``str(None)`` 会变成字面量 ``"None"``）。
     """
-    expected = str(spec.value)
+    expected = _require_text(spec.value, "exact")
     if response == expected:
       return True, _PASS
     return False, f"输出与期望不相等: 期望={expected!r}, 实际={response!r}"
+
+
+# 灾难性回溯（ReDoS）预检用的三条归一化正则 + 一条匹配正则。它们自身只含字符类、
+# 单层分组与单层量词（无嵌套量词），最坏复杂度是多项式级，不会出现「用 ReDoS 正则
+# 检测 ReDoS」的自伤；输入也只是用例里的模式串（通常几十个字符）。
+_NON_CAPTURING_PREFIX = re.compile(r"\(\?:")
+_ESCAPE_SEQUENCE = re.compile(r"\\.")
+_CHARACTER_CLASS = re.compile(r"\[[^\]]*\]")
+# 「组内有量词、组后又是无上界量词」的形态：(a+)+ / (a*)* / (a?){2,}，内部再套一层
+# 括号组的 ((a+))+ 也覆盖；前瞻/后顾组（(?= (?<= (?<! (?!）不是消费性分组，不参与判定。
+_NESTED_QUANTIFIER = re.compile(
+  r"\((?!\?[=!<])"
+  # 组体内要么直接含量词（(a+)+），要么含一个带量词的子组（((a+))+）
+  r"(?:[^()]*[*+?][^()]*|\([^()]*[*+?][^()]*\))"
+  r"\)\s*(?:[*+]|\{\d+,\})"
+)
+
+
+def _detect_catastrophic_backtracking(pattern: str) -> str | None:
+  """预检灾难性回溯（ReDoS）风险；命中时返回危险片段。
+
+  判定规则是启发式的：**组内有量词、组后又是无上界量词**时，匹配失败的路径会把
+  同一段输入反复重试，尝试次数随输入长度指数增长——经典 ``(a+)+b`` 在 24 个 ``a``
+  上就要 1 秒以上。正则来自用例作者时属于自伤，但加载第三方数据集时可被用来拖死
+  整批执行，故在编译前拦下。这里不做超时线程：判定必须可复现，超时会把「慢」
+  变成与环境相关的结论。
+
+  预检前先做三步归一化，避免误判无害写法：
+  - ``(?:`` 视作 ``(``：非捕获组与捕获组的回溯特性相同；
+  - 去掉转义序列：``\\(a+\\)+`` 匹配的是字面括号，不是分组；
+  - 去掉字符类：``([*])+`` 里的 ``*`` 是字面量，不是量词。
+
+  Args:
+    pattern: 待编译的正则表达式原文。
+
+  Returns:
+    str | None: 命中的危险片段（错误消息据此指名）；无风险时为 None。
+  """
+  view = _NON_CAPTURING_PREFIX.sub("(", pattern)
+  view = _ESCAPE_SEQUENCE.sub("", view)
+  view = _CHARACTER_CLASS.sub("", view)
+  found = _NESTED_QUANTIFIER.search(view)
+  return found.group(0) if found is not None else None
 
 
 class RegexMatcher:
@@ -143,8 +253,10 @@ class RegexMatcher:
 
   语义：用 ``re.search`` 而非 ``re.fullmatch``——断言的是「输出里是否出现了符合
   模式的内容」，前后带别的文字不影响结论；需要整串匹配时把模式写成 ``^...$``。
-  失败原因：未命中给出模式与实际输出；模式本身非法则抛 ``ValueError``（用例写错，
-  不是被测应用不通过，必须与判定失败分开，否则通过率会被用例错误污染）。
+  编译前有两道用例侧拦截：空模式恒命中（与 contains/excludes 的空串口径对齐）、
+  嵌套量词形态有灾难性回溯风险。失败原因：未命中给出模式与实际输出；模式本身非法
+  则抛 ``ValueError``（用例写错，不是被测应用不通过，必须与判定失败分开，否则
+  通过率会被用例错误污染）。
   """
 
   def match(self, response: str, spec: ExpectedSpec) -> tuple[bool, str]:
@@ -158,9 +270,15 @@ class RegexMatcher:
       tuple[bool, str]: ``(True, "通过")``，或 ``(False, 失败原因)``。
 
     Raises:
-      ValueError: ``spec.value`` 无法编译为正则表达式时抛出。
+      ValueError: ``spec.value`` 为 None、为空串、存在灾难性回溯风险，或无法编译
+        为正则表达式时抛出。
     """
-    pattern_text = str(spec.value)
+    pattern_text = _require_text(spec.value, "regex")
+    if not pattern_text:
+      raise ValueError("正则表达式不能为空：空模式恒命中任一输出，判定无信息量")
+    risky = _detect_catastrophic_backtracking(pattern_text)
+    if risky is not None:
+      raise ValueError(f"正则存在灾难性回溯风险，请简化: {risky!r}")
     try:
       pattern = re.compile(pattern_text)
     except re.error as exc:
@@ -265,6 +383,9 @@ class JsonMatcher:
   Python list 值相等即视为一致）。
   失败原因：未成立的路径逐条列出（路径不存在 / 值不匹配），一次给出全貌而不是
   遇到第一条就返回，减少「改一条跑一次」的往返。
+  解析侧有两类「不可判」：语法非法（带位置）与嵌套过深（``json.loads`` 递归溢出）。
+  后者在 D20 已在加载器三路径上踩过——它同样是**输出不可判**，不能让裸
+  ``RecursionError`` 穿透本模块的异常契约。
   """
 
   def match(self, response: str, spec: ExpectedSpec) -> tuple[bool, str]:
@@ -278,12 +399,17 @@ class JsonMatcher:
       tuple[bool, str]: ``(True, "通过")``，或 ``(False, 未成立的断言清单)``。
 
     Raises:
-      ValueError: 输出不是合法 JSON，或 ``spec.value`` 不是非空映射时抛出。
+      ValueError: 输出不是合法 JSON、嵌套过深无法解析，或 ``spec.value`` 不是非空
+        映射、路径键不是字符串时抛出。
     """
     try:
       document = json.loads(response)
     except json.JSONDecodeError as exc:
       raise ValueError(f"输出不是合法 JSON: {exc.msg}（位置 {exc.pos}）") from exc
+    except RecursionError as exc:
+      # 不带上原始异常文本：各版本 json 的递归错误措辞不同（「while decoding a
+      # JSON array」等），统一成稳定口径便于上层按「不可判」归类
+      raise ValueError("JSON 嵌套过深，无法解析") from exc
     assertions = spec.value
     if not isinstance(assertions, Mapping) or not assertions:
       raise ValueError(f"json 的期望值必须是「路径 → 期望值」的非空映射: {assertions!r}")
@@ -317,6 +443,10 @@ def match_expected(response: str, spec: ExpectedSpec) -> tuple[bool, str]:
   这是评分器对外的唯一入口：批量执行器只需拿到 ``(是否通过, 说明)``，不必关心
   具体是哪一类断言、更不必逐个 if/elif 分支（分支写漏的类型会静默永远不通过）。
 
+  ``spec.tolerance`` 目前不参与判定（六类匹配器全部精确比较）。将来数值容差断言的
+  接线点就在此处：由本函数按 type 决定是否把 ``tolerance`` 传给数值型匹配器，
+  各匹配器不自行读取该字段——同一字段在六处被解释成六种含义，比暂时没有含义更糟。
+
   Args:
     response: 被测应用返回的原始输出文本。
     spec: 期望规范，``spec.type`` 决定使用哪个匹配器。
@@ -326,7 +456,8 @@ def match_expected(response: str, spec: ExpectedSpec) -> tuple[bool, str]:
 
   Raises:
     ValueError: ``spec.type`` 未注册（``judge`` 尚未接线；或绕过契约校验构造出的
-      未知类型——pydantic 在正常路径已拦截，此处为防御性兜底）。
+      未知类型——pydantic 在正常路径已拦截，此处为防御性兜底），以及各匹配器抛出的
+      用例侧/不可判错误（空期望、非法正则、非法或过深 JSON 等）。
   """
   matcher = _MATCHERS.get(spec.type)
   if matcher is None:

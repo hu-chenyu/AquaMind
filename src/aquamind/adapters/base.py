@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from ..models.score import validated_model_copy
 
 
 class AdapterResponse(BaseModel):
@@ -30,6 +33,30 @@ class AdapterResponse(BaseModel):
     default_factory=dict,
     description="元数据，如 model/latency_ms/usage",
   )
+
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**（未知字段还会被
+    静默丢弃）。本模型是执行器与评分器拿到的第一手响应，bad 副本会让「评的是哪段
+    输出」与报告对不上。收口逻辑见 ``models.score.validated_model_copy``。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（未知字段、类型不符等）时抛出。
+    """
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class BaseAdapter(ABC):

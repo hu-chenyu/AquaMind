@@ -14,15 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 import httpx
 import typer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .exceptions import AdapterError, AquaMindError, ConfigError
+from .models.score import validated_model_copy
 from .sse import iter_stream_deltas
 
 # OpenAI 兼容端点统一的补全路径（与 adapters.openai 保持同一口径）
@@ -78,6 +79,31 @@ class RunSpec(BaseModel):
     if not value.startswith(("http://", "https://")):
       raise ValueError("base_url 必须以 http:// 或 https:// 开头")
     return value
+
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**，于是
+    ``spec.model_copy(update={"base_url": "ftp://x"})`` 能产出协议非法的配置、
+    ``update={"timeout": 0}`` 能产出零超时，直到请求期才炸。收口逻辑见
+    ``models.score.validated_model_copy``。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（协议非法、超时非正、未知字段等）时抛出。
+    """
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 def load_run_spec(config_path: Path) -> RunSpec:

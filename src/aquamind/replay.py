@@ -46,16 +46,17 @@ import math
 import re
 import statistics
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .config import Settings
 from .exceptions import ReplayError
+from .models.score import validated_model_copy
 
 # request_hash 的十六进制长度：16 位约 64 bit，对本地 cassette 库碰撞概率足够，
 # 同时让文件名短到肉眼可比对
@@ -165,6 +166,30 @@ class RequestInfo(BaseModel):
   headers: dict[str, str] = Field(default_factory=dict, description="请求头全量输入")
   body: str | None = Field(default=None, description="请求体原文，无请求体时为 None")
 
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**。本模型是请求
+    指纹的来源：``update={"method": ""}`` 之类坏副本会让 cassette 命中率莫名变化，
+    而排障方向会被误导成「录制失效」。收口逻辑见 ``models.score.validated_model_copy``。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（未知字段、类型不符等）时抛出。
+    """
+    return validated_model_copy(self, update=update, deep=deep)
+
 
 class ResponseInfo(BaseModel):
   """一次响应的输入信息：录制时写入 cassette 的响应侧内容。
@@ -182,6 +207,30 @@ class ResponseInfo(BaseModel):
   status_code: int = Field(description="HTTP 状态码")
   headers: dict[str, str] = Field(default_factory=dict, description="响应头全量输入")
   body: str | bytes | None = Field(default=None, description="响应体，无响应体时为 None")
+
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**。本模型的取值
+    会原样落盘成 cassette，坏副本（如状态码写成字符串）要到回放期才暴露，而那时
+    现场已经不在。收口逻辑见 ``models.score.validated_model_copy``。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（未知字段、类型不符等）时抛出。
+    """
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class ChunkTiming(BaseModel):
@@ -214,6 +263,31 @@ class ChunkTiming(BaseModel):
     allow_inf_nan=False,
   )
   text: str = Field(description="该 chunk 的文本内容")
+
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**。本模型的
+    ``arrival_ms`` 带 ``allow_inf_nan=False``：inf/NaN 一旦经副本混入，录制会写出
+    读不回来的 cassette，报错却指向「文件损坏」。收口逻辑见
+    ``models.score.validated_model_copy``。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（index 为负、时序非有限值等）时抛出。
+    """
+    return validated_model_copy(self, update=update, deep=deep)
 
 
 class Cassette(BaseModel):
@@ -263,6 +337,33 @@ class Cassette(BaseModel):
     default=None,
     description="流式响应的 chunk 到达时序记录；非流式响应或旧格式 cassette 为 None",
   )
+
+  def model_copy(
+    self,
+    *,
+    update: Mapping[str, Any] | None = None,
+    deep: bool = False,
+  ) -> Self:
+    """复制实例；带 update 时重新走完整校验，防止绕过契约。
+
+    pydantic v2 的 ``model_copy(update=...)`` **默认不跑任何校验**。本模型是落盘
+    结构的最终形态：``update={"response_status_code": 999}`` 能写出越界状态码，
+    ``update={"timing": [坏 ChunkTiming 实例]}`` 曾经能绕过嵌套校验（
+    ``revalidate_instances='never'``），回放期才炸。收口逻辑见
+    ``models.score.validated_model_copy``。
+
+    Args:
+      update: 要覆盖的字段（None 或空字典时按纯复制处理）。
+      deep: 是否深拷贝嵌套对象（沿用官方语义）。
+
+    Returns:
+      Self: 副本；带 update 时是**重新校验过**的副本。
+
+    Raises:
+      ValidationError: update 后的字段违反契约（状态码越界、嵌套时序非法、
+        未知字段等）时抛出。
+    """
+    return validated_model_copy(self, update=update, deep=deep)
 
   @staticmethod
   def compute_request_hash(request: RequestInfo) -> str:
