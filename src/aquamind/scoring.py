@@ -22,13 +22,20 @@
 4. **期望值类型不对** → 抛 ``TypeError``（如 keywords 传了数字），属调用方把结构拼错了，
    与「内容非法」分开才便于定位。
 
+确定性匹配器共八类：六类基础匹配器（exact / regex / contains / excludes / keywords /
+json），加上 D22 新增的 ``all``（结构化断言组合）与 ``agent``（Agent 工具调用断言）。
 ``judge`` 类型需真实模型调用（M2-D07），不属确定性评分器，故未注册；``match_expected``
 遇到它会明确报「未注册」，而不是静默给出一个假分数。
 
-``ExpectedSpec.tolerance``（数值容差）当前**不参与**任何判定：六类确定性匹配器全部
-精确比较，容差是给 D22 结构化断言组合预留的字段（exact 数值比较、json 数值路径比较）。
-接线点集中在 ``match_expected``——未来由它按 type 把 tolerance 传给数值型匹配器，
-而不是散落进各匹配器的私有逻辑。
+``ExpectedSpec.tolerance``（数值容差）当前**不参与**任何判定：八类确定性匹配器全部
+精确比较（``all`` / ``agent`` 同样不消费它），容差留给数值型断言使用（exact 数值比较、
+json 数值路径比较）。接线点集中在 ``match_expected``——未来由它按 type 把 tolerance
+传给数值型匹配器，而不是散落进各匹配器的私有逻辑。
+
+``all`` 通过递归调用 ``match_expected`` 判定每个子断言，因此天然支持嵌套组合；子断言
+抛出的 ``ValueError``（含非法 JSON 这类不可判）一律**继续向上传播**，不被压成「不通过」
+——组合里只要有一条判不了，整个组合就判不了。``agent`` 今天只实现三层断言里的参数层
+（``assert_args``），顺序层（``order``）与工具层（``tools``）顺延 D31。
 """
 
 from __future__ import annotations
@@ -474,6 +481,284 @@ class JsonMatcher:
     return True, _PASS
 
 
+# ---------------------------------------------------------------------------
+# D22：结构化断言组合（all）与 Agent 工具调用断言（agent）
+# ---------------------------------------------------------------------------
+
+
+def _sub_specs(value: object) -> list[ExpectedSpec]:
+  """把 ``all`` 的期望值归一为已校验的非空子断言列表。
+
+  ``value`` 必须是列表（也接受元组，便于程序内构造用例），元素是 ``ExpectedSpec``
+  形态的映射（含 type / value / tolerance）。元素走 ``model_validate`` 而非直接信任：
+  坏子断言（未知 type、负容差、拼错字段、根本不是映射）会在进入判定前被 pydantic
+  拦下。``ValidationError`` 本身是 ``ValueError`` 的子类，故对外口径与模块其余
+  「用例写错」出口一致，不需要再包一层——包了反而丢掉 pydantic 给出的字段级定位。
+
+  Args:
+    value: ``all`` 断言的期望值。
+
+  Returns:
+    list[ExpectedSpec]: 已校验的子断言列表，顺序与用例一致。
+
+  Raises:
+    ValueError: ``value`` 不是列表/元组，或归一后为空列表时抛出（空组合恒通过，
+      不含任何被测信号）。
+    ValidationError: 某个子断言不符合 ``ExpectedSpec`` 契约时抛出（ValueError 子类）。
+  """
+  if isinstance(value, (list, tuple)):
+    specs = [ExpectedSpec.model_validate(item) for item in value]
+    if not specs:
+      raise ValueError("all 的子断言列表不能为空：空组合恒通过，判定无信息量")
+    return specs
+  # 走到这里说明 value 的类型就不对：与 _path_segments 同写法（正向分支先返回，
+  # 报错放在 isinstance 之外），既避开 TRY004 的「类型错应抛 TypeError」口径，
+  # 又保持本模块「用例写错一律 ValueError」的单一出口
+  raise ValueError(f"all 的期望值必须是子断言列表: {value!r}")
+
+
+class AllMatcher:
+  """结构化断言组合匹配器：全部子断言通过才通过（AND 语义，首个失败即停）。
+
+  语义：``spec.value`` 是一条用例对同一个输出提出的多条断言（例如「包含某关键词」
+  且「JSON 某路径为某值」）。所有子断言都通过才通过；遇到第一条不通过就立即返回，
+  并在原因里带上「组合断言第 N 条失败」与子断言自己的原因——定位到**首个**失败，
+  而不是把全部失败汇总后让人猜哪条是最先崩的（改一条跑一次的往返代价更高）。
+  刻意不短路「通过」：通过与否是 AND 关系，没有可提前收敛的捷径。
+
+  不可判必须传播：子断言若抛 ``ValueError``（非法 JSON、未注册类型、空期望等），
+  本匹配器**不捕获**，整个组合随之判为不可判。把不可判压成「不通过」会让通过率
+  虚低，还会掩盖「输出压根解析不了」这个更该优先暴露的问题。
+
+  嵌套：子断言可以又是 ``all``，递归走 ``match_expected``，天然支持多层组合；
+  层数不设上限，但受 Python 递归深度约束（用例里的组合层级通常是 2-3 层）。
+  """
+
+  def match(self, response: str, spec: ExpectedSpec) -> tuple[bool, str]:
+    """按顺序判定全部子断言，返回首个失败。
+
+    Args:
+      response: 被测应用返回的原始输出文本（所有子断言共用同一份输出）。
+      spec: 期望规范，``spec.value`` 为子断言列表（每项是 ExpectedSpec 形态的映射）。
+
+    Returns:
+      tuple[bool, str]: 全部通过返回 ``(True, "通过")``；否则返回
+        ``(False, "组合断言第 N 条失败: <子断言原因>")``，N 从 1 开始。
+
+    Raises:
+      ValueError: ``spec.value`` 不是非空列表时抛出；子断言抛出的 ``ValueError``
+        （用例写错或不可判）原样向上传播，不压成不通过。
+    """
+    sub_specs = _sub_specs(spec.value)
+    for index, sub_spec in enumerate(sub_specs, start=1):
+      passed, reason = match_expected(response, sub_spec)
+      if not passed:
+        return False, f"组合断言第 {index} 条失败: {reason}"
+    return True, _PASS
+
+
+def _parse_agent_output(response: str) -> Mapping[str, Any]:
+  """把 Agent 输出解析为 JSON 对象（须是能承载 ``tool_calls`` 的对象结构）。
+
+  与 ``JsonMatcher`` 同口径：整体解析，不做「抓取第一个花括号」这类容错——容错会把
+  「模型在 JSON 前后多说了话」掩盖成通过。三类情况都算**输出不可判**，统一抛
+  ``ValueError`` 而不是返回不通过：语法非法（消息带位置）、嵌套过深（``json.loads``
+  递归溢出，D20 在加载器上踩过、D21 已在 JsonMatcher 收口）、顶层不是对象（数组或
+  标量里无处取 ``tool_calls``）。
+
+  Args:
+    response: 被测应用返回的原始输出文本。
+
+  Returns:
+    Mapping[str, Any]: 解析出的输出对象（``tool_calls`` 的提取由 ``_tool_calls`` 负责）。
+
+  Raises:
+    ValueError: 输出不是合法 JSON、嵌套过深无法解析，或顶层不是对象时抛出。
+  """
+  try:
+    document = json.loads(response)
+  except json.JSONDecodeError as exc:
+    raise ValueError(f"输出不是合法 JSON: {exc.msg}（位置 {exc.pos}）") from exc
+  except RecursionError as exc:
+    # 不带原始异常文本：各版本 json 的递归错误措辞不同，统一成稳定口径便于上层归类
+    raise ValueError("JSON 嵌套过深，无法解析") from exc
+  if isinstance(document, Mapping):
+    return document
+  # 正向分支先返回、报错放在 isinstance 之外（同 _path_segments），避开 TRY004 口径
+  raise ValueError(
+    f"输出不是合法 JSON 对象（Agent 断言需要含 tool_calls 的对象）: {type(document).__name__}"
+  )
+
+
+def _parse_tool_arguments(arguments: object) -> Any:
+  """把 ``function.arguments`` 二次解析为 JSON 值（OpenAI 兼容格式下是 JSON 字符串）。
+
+  非字符串（例如已经是对象）统一 str 化后再解析：其文本形态是单引号 repr、必然解析
+  失败，于是以「不可判」收口，而不是把未经协议约束的对象直接拿来比较——否则「参数
+  只差一个字符串/数字类型」这类差异会被 Python 的隐式等价吞掉。
+
+  Args:
+    arguments: 工具调用记录里的 ``arguments`` 字段。
+
+  Returns:
+    Any: 解析后的参数对象（通常是 dict，也可能是 list 或标量）。
+
+  Raises:
+    ValueError: 无法解析为合法 JSON 时抛出（消息带解析器的位置信息）。
+  """
+  try:
+    return json.loads(str(arguments))
+  except json.JSONDecodeError as exc:
+    raise ValueError(f"工具调用的 arguments 不是合法 JSON: {exc.msg}（位置 {exc.pos}）") from exc
+
+
+def _tool_calls(document: Mapping[str, Any]) -> list[tuple[Any, Any]]:
+  """从已解析的 Agent 输出中取出工具调用序列 ``[(工具名, 参数对象), ...]``。
+
+  输出格式假设为 OpenAI 兼容形态：
+
+  ``{"tool_calls": [{"function": {"name": "get_weather", "arguments": "{\\"city\\": \\"bj\\"}"}}]}``
+
+  ``arguments`` 是 JSON 字符串，需二次解析后才是可比较的参数对象。缺少 ``tool_calls``
+  键或该键不是列表时返回空列表：这是**被测应用没有调用工具**，属于它的表现，由上层
+  参数层断言判为不通过；而条目形状不符（不是映射、缺 ``function`` 对象）无法按协议
+  解释，属于输出不可判，抛 ``ValueError``。
+
+  Args:
+    document: 已解析的 Agent 输出对象。
+
+  Returns:
+    list[tuple[Any, Any]]: ``(工具名, 已解析参数)`` 列表，顺序即输出顺序。
+
+  Raises:
+    ValueError: 条目形状不符合 OpenAI 兼容格式，或 ``arguments`` 不是合法 JSON 时抛出。
+  """
+  raw_calls = document.get("tool_calls")
+  if not isinstance(raw_calls, list):
+    return []
+  calls: list[tuple[Any, Any]] = []
+  for index, call in enumerate(raw_calls):
+    calls.append(_tool_call_entry(call, index))
+  return calls
+
+
+def _tool_call_entry(call: object, index: int) -> tuple[Any, Any]:
+  """校验单条工具调用记录并归一为 ``(工具名, 已解析参数)``。
+
+  Args:
+    call: ``tool_calls`` 数组里的一项（按 OpenAI 兼容格式应为映射）。
+    index: 该项在数组中的下标，仅用于错误消息里定位。
+
+  Returns:
+    tuple[Any, Any]: ``(function.name, 已二次解析的 arguments)``。
+
+  Raises:
+    ValueError: 该项不是映射、或缺少 ``function`` 对象，或 ``arguments`` 不是合法
+      JSON 时抛出（均为输出不可判）。
+  """
+  function = call.get("function") if isinstance(call, Mapping) else None
+  if isinstance(function, Mapping):
+    return function.get("name"), _parse_tool_arguments(function.get("arguments"))
+  raise ValueError(f"tool_calls 第 {index} 项缺少 function 对象: {call!r}")
+
+
+def _agent_assert_args(value: object) -> list[tuple[str, Any]]:
+  """把 ``agent`` 的期望值归一为参数层断言列表 ``[(工具名, 期望参数), ...]``。
+
+  只解释 ``assert_args`` 一个键：``order``（顺序层）与 ``tools``（工具层）今天不实现
+  （顺延 D31），出现即忽略、不报错——这样 D31 补上两层时，今天的用例文件不必改写。
+  反过来，``assert_args`` 缺失或为空则按用例写错拦下：没有参数断言就没有判定内容，
+  放行等于给出一条恒通过的空断言。
+
+  Args:
+    value: ``agent`` 断言的期望值（应为含 ``assert_args`` 的映射）。
+
+  Returns:
+    list[tuple[str, Any]]: ``(工具名, 期望参数)`` 列表，顺序与用例一致。
+
+  Raises:
+    ValueError: 期望值不是映射、缺 ``assert_args`` 键、该键不是非空列表，或条目缺
+      ``tool`` / ``arguments``（含 tool 非空字符串）时抛出。
+  """
+  entries = value.get("assert_args") if isinstance(value, Mapping) else None
+  if not isinstance(entries, (list, tuple)) or not entries:
+    raise ValueError(f"agent 的期望值必须是含非空 assert_args 列表的映射: {value!r}")
+  return [_agent_assert_entry(entry, index) for index, entry in enumerate(entries, start=1)]
+
+
+def _agent_assert_entry(entry: object, index: int) -> tuple[str, Any]:
+  """校验 ``assert_args`` 的一条断言并归一为 ``(工具名, 期望参数)``。
+
+  Args:
+    entry: ``assert_args`` 数组里的一项（应为含 tool / arguments 的映射）。
+    index: 该项在数组中的下标（从 1 开始），仅用于错误消息里定位。
+
+  Returns:
+    tuple[str, Any]: ``(tool, 期望参数)``。
+
+  Raises:
+    ValueError: 该项不是映射、``tool`` 不是非空字符串、或缺 ``arguments`` 键时抛出。
+  """
+  if isinstance(entry, Mapping):
+    tool = entry.get("tool")
+    if not isinstance(tool, str) or not tool:
+      raise ValueError(f"assert_args 第 {index} 条的 tool 必须是非空字符串: {entry!r}")
+    if "arguments" not in entry:
+      raise ValueError(f"assert_args 第 {index} 条缺少 arguments 键: {entry!r}")
+    return tool, entry["arguments"]
+  raise ValueError(f"assert_args 第 {index} 条必须是映射（含 tool 与 arguments）: {entry!r}")
+
+
+class AgentMatcher:
+  """Agent 工具调用断言匹配器：今天只实现参数层（``assert_args``）。
+
+  三层断言架构（按信息量从高到低组织）：**参数 > 顺序 > 工具**——
+  - 参数层：指定工具被调用，且其 ``arguments`` 与期望完全相等（最严格，能定位到
+    具体传错哪个字段）；
+  - 顺序层：工具调用的先后顺序符合期望（顺延 D31）；
+  - 工具层：该调用的工具都调用过、不该调用的没调用（顺延 D31）。
+  今天只实现参数层，``order`` / ``tools`` 两个键在 value 里预留位置、出现即忽略。
+
+  输出格式假设为 OpenAI 兼容的 ``tool_calls``：
+
+  ``{"tool_calls": [{"function": {"name": "...", "arguments": "{...JSON 字符串...}"}}]}``
+
+  ``arguments`` 需二次解析（JSON 字符串 → 对象）后再逐字段比较，且比较的是**完全
+  相等**，不做部分匹配：只断言「包含某个键」这类宽松口径会把「多传了参数」「少传了
+  参数」一起放过，而那正是工具调用出错的主要形态。同一工具被调用多次时，只要其中
+  任一次的参数与期望相等即视为命中（不校验调用序，属顺序层职责）。
+  """
+
+  def match(self, response: str, spec: ExpectedSpec) -> tuple[bool, str]:
+    """按参数层断言逐条核对工具调用。
+
+    Args:
+      response: 被测应用返回的原始输出文本（须为含 ``tool_calls`` 的 JSON 对象）。
+      spec: 期望规范，``spec.value`` 为含 ``assert_args`` 非空列表的映射。
+
+    Returns:
+      tuple[bool, str]: 全部断言成立返回 ``(True, "通过")``；否则返回 ``(False, 原因)``，
+        原因区分「未调用工具」与「参数不匹配」（后者同时给出期望与实际参数）。
+
+    Raises:
+      ValueError: 输出不是合法 JSON 对象、``arguments`` 不是合法 JSON，或
+        ``spec.value`` 不符合 ``assert_args`` 结构时抛出（用例写错或不可判）。
+    """
+    document = _parse_agent_output(response)
+    expected_calls = _agent_assert_args(spec.value)
+    actual_calls = _tool_calls(document)
+    for tool, expected_arguments in expected_calls:
+      matched = [arguments for name, arguments in actual_calls if name == tool]
+      if not matched:
+        called = [name for name, _ in actual_calls]
+        return False, f"未调用工具 {tool!r}: 期望调用 {tool!r}，实际调用={called}"
+      if expected_arguments not in matched:
+        return False, (
+          f"工具 {tool!r} 参数不匹配: 期望={expected_arguments!r}, 实际={matched!r}"
+        )
+    return True, _PASS
+
+
 # type → 匹配入口的唯一映射：新增类型只改这一处（与契约层 ExpectedType 同步）。
 # 存绑定方法而非实例，是为了让调用方无需再实例化；judge 有意缺席（需真实模型调用）。
 _MATCHERS: dict[ExpectedType, Callable[[str, ExpectedSpec], tuple[bool, str]]] = {
@@ -483,6 +768,8 @@ _MATCHERS: dict[ExpectedType, Callable[[str, ExpectedSpec], tuple[bool, str]]] =
   "excludes": ExcludesMatcher().match,
   "keywords": KeywordsMatcher().match,
   "json": JsonMatcher().match,
+  "all": AllMatcher().match,
+  "agent": AgentMatcher().match,
 }
 
 
@@ -492,9 +779,9 @@ def match_expected(response: str, spec: ExpectedSpec) -> tuple[bool, str]:
   这是评分器对外的唯一入口：批量执行器只需拿到 ``(是否通过, 说明)``，不必关心
   具体是哪一类断言、更不必逐个 if/elif 分支（分支写漏的类型会静默永远不通过）。
 
-  ``spec.tolerance`` 目前不参与判定（六类匹配器全部精确比较）。将来数值容差断言的
+  ``spec.tolerance`` 目前不参与判定（八类匹配器全部精确比较）。将来数值容差断言的
   接线点就在此处：由本函数按 type 决定是否把 ``tolerance`` 传给数值型匹配器，
-  各匹配器不自行读取该字段——同一字段在六处被解释成六种含义，比暂时没有含义更糟。
+  各匹配器不自行读取该字段——同一字段在八处被解释成八种含义，比暂时没有含义更糟。
 
   Args:
     response: 被测应用返回的原始输出文本。

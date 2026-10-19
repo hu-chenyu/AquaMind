@@ -20,20 +20,24 @@ from .score import NonBlankStr, validated_model_copy
 # 与 config.Settings.log_level 用同一套 Literal 写法保持项目风格一致；
 # M2 若需新增类型，只需在此处追加一个成员。
 #
-# 七类中 exact/regex/contains/excludes/keywords/json 由 scoring.py 的确定性匹配器
-# 实现；judge 需真实模型调用（M2-D07），不属确定性评分器，故由 judge 适配器承接。
-ExpectedType = Literal["exact", "regex", "contains", "judge", "excludes", "keywords", "json"]
+# 九类中 exact/regex/contains/excludes/keywords/json/all/agent 由 scoring.py 的确定性
+# 匹配器实现；judge 需真实模型调用（M2-D07），不属确定性评分器，故由 judge 适配器承接。
+# all（结构化断言组合）与 agent（Agent 工具调用断言）是 D22 新增的两类：前者的 value 是
+# 子断言列表，后者的 value 是含 assert_args 的映射，解释方式见 scoring.py 对应匹配器。
+ExpectedType = Literal[
+  "exact", "regex", "contains", "judge", "excludes", "keywords", "json", "all", "agent"
+]
 
 
 class ExpectedSpec(BaseModel):
   """期望输出规范：描述一条用例对模型输出的判定条件。
 
   Attributes:
-    type: 期望类型（exact/regex/contains/judge/excludes/keywords/json），
+    type: 期望类型（exact/regex/contains/judge/excludes/keywords/json/all/agent），
       决定 value 的解释方式
     value: 期望值，具体类型由 type 决定
-    tolerance: 数值容差（绝对误差），须非负；当前六类确定性匹配器暂不消费，
-      接线点见 D22 结构化断言组合
+    tolerance: 数值容差（绝对误差），须非负；当前八类确定性匹配器（含 D22 新增的
+      all / agent）均不消费，数值容差接线待后续任务
   """
 
   # 严格模式：禁止未知字段，防止字段名拼写错误被静默忽略；
@@ -41,7 +45,7 @@ class ExpectedSpec(BaseModel):
   model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
   type: ExpectedType = Field(
-    description="期望类型：exact/regex/contains/judge/excludes/keywords/json"
+    description="期望类型：exact/regex/contains/judge/excludes/keywords/json/all/agent"
   )
   value: Any = Field(description="期望值，具体类型由 type 决定")
   tolerance: float = Field(
@@ -49,7 +53,7 @@ class ExpectedSpec(BaseModel):
     ge=0.0,
     description=(
       "数值容差（绝对误差）。预留用于数值类断言：exact 数值比较、json 数值路径比较；"
-      "当前六类确定性匹配器暂不消费，接线点见 D22 结构化断言组合"
+      "当前八类确定性匹配器（含 D22 新增的 all/agent）均不消费，数值容差接线待后续任务"
     ),
   )
 

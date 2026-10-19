@@ -1,7 +1,7 @@
 """精确匹配评分器单元测试。
 
 覆盖范围：
-- 六类匹配器（exact / regex / contains / excludes / keywords / json）的通过与失败
+- 六类基础匹配器（exact / regex / contains / excludes / keywords / json）的通过与失败
   分支，以及「用例写错」（空子串、非法正则、非法 JSON、期望值类型不对）时必须抛
   ``ValueError`` 而非返回 False；
 - 边界加固（D21 收尾）：None 期望值、空正则、灾难性回溯预检、JSON 路径键非字符串、
@@ -9,18 +9,27 @@
 - ``match_expected`` 按 type 分发、未注册类型的防御性报错、``tolerance`` 契约预留；
 - 输入侧三模型（TestCase / ExpectedSpec / ScoreTag）的 ``model_copy(update=...)``
   收口：带 update 走完整校验，越界值/未知字段/非法嵌套一律被拒；
-- 契约层 ``ExpectedType`` 的七类合法取值与非法取值拦截。
+- 契约层 ``ExpectedType`` 的七类合法取值与非法取值拦截；
+- D22 新增两类（``all`` / ``agent``）：组合断言的**首个失败定位**与不可判传播、
+  Agent 工具调用断言的参数层（``assert_args``）判定。顺序层 / 工具层顺延 D31，
+  本文件只固化「``order`` / ``tools`` 出现即忽略」这一现状。
 
-全部用例纯本地判定，不发起任何网络调用（零 key）。
+全部用例纯本地判定，不发起任何网络调用（零 key）；Agent 用例的模型输出是硬编码
+JSON 字符串，不调用任何真实模型。
 """
 
 from __future__ import annotations
+
+import json
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from aquamind.models.testcase import ExpectedSpec, ExpectedType, ScoreTag, TestCase
 from aquamind.scoring import (
+  AgentMatcher,
+  AllMatcher,
   ContainsMatcher,
   ExactMatcher,
   ExcludesMatcher,
@@ -44,6 +53,48 @@ def _case(**overrides: object) -> TestCase:
   }
   payload.update(overrides)
   return TestCase(**payload)  # type: ignore[arg-type]
+
+
+def _tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+  """构造一条 OpenAI 兼容的工具调用记录：``arguments`` 是 JSON 字符串。
+
+  Args:
+    name: 工具名。
+    arguments: 参数对象，会被序列化成 JSON 字符串（与真实模型输出一致）。
+
+  Returns:
+    dict[str, Any]: ``{"function": {"name": ..., "arguments": ...}}``。
+  """
+  return {"function": {"name": name, "arguments": json.dumps(arguments)}}
+
+
+def _agent_output(*calls: dict[str, Any]) -> str:
+  """把若干工具调用打包成 Agent 输出文本（硬编码 mock 输出，零 key）。
+
+  Args:
+    *calls: ``_tool_call`` 构造的调用记录，按输出顺序传入。
+
+  Returns:
+    str: 形如 ``{"tool_calls": [...]}`` 的 JSON 文本。
+  """
+  return json.dumps({"tool_calls": list(calls)})
+
+
+def _agent_spec(*assertions: tuple[str, dict[str, Any]], **extra: Any) -> ExpectedSpec:
+  """构造 agent 断言规范；``extra`` 用于验证 order / tools 等预留键被忽略。
+
+  Args:
+    *assertions: ``(工具名, 期望参数)`` 二元组，按 assert_args 顺序展开。
+    **extra: 额外写进 value 的键（如 order / tools）。
+
+  Returns:
+    ExpectedSpec: ``type="agent"`` 的期望规范。
+  """
+  value: dict[str, Any] = {
+    "assert_args": [{"tool": tool, "arguments": args} for tool, args in assertions]
+  }
+  value.update(extra)
+  return _spec("agent", value)
 
 
 class TestExactMatcher:
@@ -523,3 +574,228 @@ class TestToleranceContract:
     assert "预留用于数值类断言" in description
     assert "D22" in description
     assert match_expected("41.6", spec)[0] is False
+
+
+class TestAllMatcher:
+  """all：全部子断言通过才通过；首个失败即停；不可判必须向上传播。"""
+
+  def test_all_children_pass(self) -> None:
+    """三条子断言（contains / json / regex）全部成立时组合通过。"""
+    spec = _spec(
+      "all",
+      [
+        {"type": "contains", "value": "北京"},
+        {"type": "json", "value": {"city": "北京"}},
+        {"type": "regex", "value": r"\d+"},
+      ],
+    )
+    assert match_expected('{"city": "北京", "temp": 21}', spec) == (True, "通过")
+
+  def test_first_failure_short_circuits(self) -> None:
+    """首条失败立即返回，后续子断言不再执行。
+
+    第二条子断言是非法正则（一旦执行就抛 ValueError）：若没有被短路，本用例会以
+    异常崩掉而不是返回 ``(False, ...)``，故「没有抛异常且定位到第 1 条」本身就证明
+    后续子断言未被执行。
+    """
+    spec = _spec(
+      "all",
+      [
+        {"type": "exact", "value": "期望输出"},
+        {"type": "regex", "value": "(["},
+        {"type": "contains", "value": "关键词"},
+      ],
+    )
+    passed, reason = match_expected("实际输出", spec)
+    assert passed is False
+    assert "组合断言第 1 条失败" in reason
+    assert "输出与期望不相等" in reason
+
+  def test_middle_failure_reports_first_failing_index(self) -> None:
+    """中间条失败时定位到首个失败（第 2 条），而不是最后一条（第 3 条）。"""
+    spec = _spec(
+      "all",
+      [
+        {"type": "contains", "value": "北京"},
+        {"type": "contains", "value": "湿度"},
+        {"type": "contains", "value": "气压"},
+      ],
+    )
+    passed, reason = match_expected('{"city": "北京"}', spec)
+    assert passed is False
+    assert "组合断言第 2 条失败" in reason
+    assert "湿度" in reason
+    # 第 3 条也必然失败，但组合必须在首个失败处停下，不能汇总到「最后一条」
+    assert "第 3 条" not in reason
+
+  def test_empty_list_rejected(self) -> None:
+    """空组合恒通过、不含任何被测信号，必须按用例写错拦下。"""
+    with pytest.raises(ValueError) as excinfo:
+      match_expected("任意输出", _spec("all", []))
+    assert "不能为空" in str(excinfo.value)
+
+  def test_non_list_value_rejected(self) -> None:
+    """value 是映射/字符串/数字时都属用例写错，不能被当成单条子断言收下。"""
+    for value in ({"type": "contains", "value": "北京"}, "contains", 42):
+      with pytest.raises(ValueError) as excinfo:
+        match_expected("任意输出", _spec("all", value))
+      assert "子断言列表" in str(excinfo.value)
+
+  def test_json_child_invalid_output_propagates(self) -> None:
+    """子断言遇非法 JSON 时整组判不可判：ValueError 必须传播，不能压成不通过。
+
+    压成 False 会让通过率虚低，还会掩盖「输出压根解析不了」这个更该优先暴露的问题。
+    """
+    spec = _spec(
+      "all",
+      [
+        {"type": "contains", "value": "北京"},
+        {"type": "json", "value": {"city": "北京"}},
+      ],
+    )
+    # 第一条 contains 先通过，确保真正走到 json 子断言上；直接调匹配器本身，
+    # 证明「不捕获子断言异常」是 AllMatcher 自己的行为，而不是入口层的巧合
+    with pytest.raises(ValueError) as excinfo:
+      AllMatcher().match("北京但后面不是 JSON", spec)
+    assert "输出不是合法 JSON" in str(excinfo.value)
+
+  def test_nested_all_works(self) -> None:
+    """all 里再套 all：递归走 match_expected，内层结论能原样透出到外层原因里。"""
+    spec = _spec(
+      "all",
+      [
+        {"type": "all", "value": [{"type": "contains", "value": "北京"}]},
+        {"type": "contains", "value": "21"},
+      ],
+    )
+    assert match_expected("北京 晴 21 度", spec) == (True, "通过")
+    inner_fail = _spec("all", [{"type": "all", "value": [{"type": "contains", "value": "雪"}]}])
+    passed, reason = match_expected("北京 晴 21 度", inner_fail)
+    assert passed is False
+    assert "组合断言第 1 条失败" in reason
+    assert "雪" in reason
+
+  def test_unregistered_child_type_propagates(self) -> None:
+    """judge 子断言未注册（需真实模型调用）：ValueError 必须传播，不得压成不通过。"""
+    spec = _spec("all", [{"type": "judge", "value": "回答是否礼貌"}])
+    with pytest.raises(ValueError) as excinfo:
+      AllMatcher().match("任意输出", spec)
+    assert "未注册的期望类型" in str(excinfo.value)
+
+
+class TestAgentMatcher:
+  """agent：参数层断言（assert_args）——工具被调用且 arguments 完全相等才通过。"""
+
+  def test_single_tool_call_matches(self) -> None:
+    """单次工具调用、参数完全相等时通过。"""
+    output = _agent_output(_tool_call("get_weather", {"city": "北京"}))
+    assert match_expected(output, _agent_spec(("get_weather", {"city": "北京"}))) == (
+      True,
+      "通过",
+    )
+
+  def test_multiple_tool_calls_all_match(self) -> None:
+    """多条调用、多条断言全部命中时通过；参数按键值比较，键序不影响结论。"""
+    output = _agent_output(
+      _tool_call("get_weather", {"city": "北京"}),
+      _tool_call("get_air_quality", {"city": "北京", "unit": "aqi"}),
+    )
+    spec = _agent_spec(
+      ("get_air_quality", {"unit": "aqi", "city": "北京"}),
+      ("get_weather", {"city": "北京"}),
+    )
+    assert match_expected(output, spec) == (True, "通过")
+
+  def test_argument_mismatch_reports_expected_and_actual(self) -> None:
+    """参数不完全相等即不通过，原因同时给出期望与实际（定位传错哪个值）。"""
+    output = _agent_output(_tool_call("get_weather", {"city": "上海"}))
+    passed, reason = match_expected(output, _agent_spec(("get_weather", {"city": "北京"})))
+    assert passed is False
+    assert "参数不匹配" in reason
+    assert "期望={'city': '北京'}" in reason
+    assert "上海" in reason
+
+  def test_uncalled_tool_fails_with_tool_name(self) -> None:
+    """断言指定的工具没被调用时不通过，原因点名该工具与实际调用清单。"""
+    output = _agent_output(_tool_call("get_weather", {"city": "北京"}))
+    passed, reason = match_expected(output, _agent_spec(("search_hotel", {"city": "北京"})))
+    assert passed is False
+    assert "未调用工具 'search_hotel'" in reason
+    assert "get_weather" in reason
+
+  def test_unparseable_output_raises_value_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    """输出无法解释为 Agent 结果时一律 ValueError（不可判），不得压成不通过。
+
+    覆盖四种不可解析形态：JSON 语法非法、JSON 顶层不是对象、tool_calls 条目缺
+    ``function`` 对象、深嵌套触发 json 递归溢出（与 JsonMatcher 同口径收口）。
+    """
+    spec = _agent_spec(("get_weather", {"city": "北京"}))
+    cases = [
+      ("这不是 JSON", "不是合法 JSON"),
+      ("[1, 2]", "不是合法 JSON"),
+      ('{"tool_calls": ["不是对象"]}', "缺少 function 对象"),
+    ]
+    for bad_output, fragment in cases:
+      with pytest.raises(ValueError) as excinfo:
+        AgentMatcher().match(bad_output, spec)
+      assert fragment in str(excinfo.value)
+
+    def _boom(_raw: str) -> object:
+      """模拟 json.loads 递归溢出。"""
+      raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr("aquamind.scoring.json.loads", _boom)
+    with pytest.raises(ValueError) as excinfo:
+      AgentMatcher().match('{"tool_calls": []}', spec)
+    assert "嵌套过深" in str(excinfo.value)
+
+  def test_invalid_arguments_json_raises_value_error(self) -> None:
+    """arguments 不是合法 JSON 字符串时属不可判（ValueError），不是「参数不匹配」。"""
+    output = json.dumps(
+      {"tool_calls": [{"function": {"name": "get_weather", "arguments": "{不是 JSON"}}]}
+    )
+    with pytest.raises(ValueError) as excinfo:
+      match_expected(output, _agent_spec(("get_weather", {"city": "北京"})))
+    assert "arguments 不是合法 JSON" in str(excinfo.value)
+
+  def test_missing_tool_calls_fails(self) -> None:
+    """输出没有 tool_calls 键 = 没调用任何工具：判不通过，而不是不可判。"""
+    passed, reason = match_expected('{"messages": []}', _agent_spec(("get_weather", {})))
+    assert passed is False
+    assert "未调用工具 'get_weather'" in reason
+    assert "实际调用=[]" in reason
+
+  def test_empty_assert_args_rejected(self) -> None:
+    """assert_args 为空列表 = 没有参数断言，恒通过的空断言必须按用例写错拦下。"""
+    with pytest.raises(ValueError) as excinfo:
+      match_expected(_agent_output(), _spec("agent", {"assert_args": []}))
+    assert "非空 assert_args" in str(excinfo.value)
+
+  def test_invalid_value_shape_rejected(self) -> None:
+    """value 形态非法一律 ValueError：非映射、缺键、条目缺 tool 或缺 arguments。"""
+    output = _agent_output(_tool_call("get_weather", {"city": "北京"}))
+    cases = [
+      (["get_weather"], "非空 assert_args"),
+      ({"order": ["get_weather"]}, "非空 assert_args"),
+      ({"assert_args": ["get_weather"]}, "必须是映射"),
+      ({"assert_args": [{"arguments": {"city": "北京"}}]}, "tool 必须是非空字符串"),
+      ({"assert_args": [{"tool": "get_weather"}]}, "缺少 arguments 键"),
+    ]
+    for value, fragment in cases:
+      with pytest.raises(ValueError) as excinfo:
+        match_expected(output, _spec("agent", value))
+      assert fragment in str(excinfo.value)
+
+  def test_order_and_tools_keys_ignored(self) -> None:
+    """order / tools 两个预留键今天被忽略：参数层判定不受影响（两层顺延 D31）。"""
+    output = _agent_output(
+      _tool_call("get_weather", {"city": "北京"}),
+      _tool_call("get_air_quality", {"city": "北京"}),
+    )
+    spec = _agent_spec(
+      ("get_weather", {"city": "北京"}),
+      # 与实际调用顺序相反、且点名一个根本没调用的工具：今天都不校验
+      order=["get_air_quality", "get_weather"],
+      tools=["search_hotel"],
+    )
+    assert match_expected(output, spec) == (True, "通过")
