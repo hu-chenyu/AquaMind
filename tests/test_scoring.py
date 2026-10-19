@@ -391,10 +391,20 @@ class TestRegexRedos:
 
   @pytest.mark.parametrize(
     "pattern",
-    [r"(a+)+b", r"(a*)*", r"((a+))+", r"(?:a+)+", r"(x|a+)+$"],
+    [
+      r"(a+)+b",
+      r"(a*)*",
+      r"((a+))+",
+      r"(?:a+)+",
+      r"(x|a+)+$",
+      # 交替冗余：两条分支消耗相同字符，零宽保护剪不掉（复核 B 实测
+      # (a|a?)+b 在 24 个 a 上耗时 20s，呈 2^n 增长）
+      r"(a|a?)+",
+      r"(a|ab?)+",
+    ],
   )
   def test_regex_catastrophic_backtracking_detected(self, pattern: str) -> None:
-    """组内含 * / + 且组后被无上界重复：必须在用例执行前拒绝。"""
+    """组内可多种等长拆分 + 组后被无上界重复：必须在用例执行前拒绝。"""
     with pytest.raises(ValueError) as excinfo:
       RegexMatcher().match("a" * 24, _spec("regex", pattern))
     assert "灾难性回溯" in str(excinfo.value)
