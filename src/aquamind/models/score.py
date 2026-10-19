@@ -147,7 +147,12 @@ class ScoreStep(BaseModel):
   # frozen：追溯链上的每一步都是既成事实，不允许事后逐字段改写
   model_config = ConfigDict(extra="forbid", frozen=True)
 
-  scorer: NonBlankStr = Field(description="本步骤使用的评分器标识，如 exact/judge-gpt-4o-mini")
+  scorer: NonBlankStr = Field(
+    description=(
+      "本步骤使用的评分器标识，如 "
+      "exact/regex/contains/excludes/keywords/json/judge-gpt-4o-mini"
+    )
+  )
   input_digest: NonBlankStr = Field(description="输入摘要（截断后的可读文本）")
   output_digest: NonBlankStr = Field(description="输出摘要（截断后的可读文本）")
   partial_score: ScoreValue = Field(description="本步骤产出的中间分，0.0-1.0")

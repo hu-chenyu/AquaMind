@@ -391,20 +391,33 @@ class TestRegexRedos:
 
   @pytest.mark.parametrize(
     "pattern",
-    [r"(a+)+b", r"(a*)*", r"(a?){2,}", r"((a+))+", r"(?:a+)+", r"(x|a+)+$"],
+    [r"(a+)+b", r"(a*)*", r"((a+))+", r"(?:a+)+", r"(x|a+)+$"],
   )
   def test_regex_catastrophic_backtracking_detected(self, pattern: str) -> None:
-    """嵌套量词在 24 个 a 上即需 1 秒以上：必须在用例执行前拒绝。"""
+    """组内含 * / + 且组后被无上界重复：必须在用例执行前拒绝。"""
     with pytest.raises(ValueError) as excinfo:
       RegexMatcher().match("a" * 24, _spec("regex", pattern))
     assert "灾难性回溯" in str(excinfo.value)
 
   @pytest.mark.parametrize(
     "pattern",
-    [r"\d+", r"^(yes|no)$", r"\(a+\)+", r"([*])+", r"(ab)+", r"a+?b", r"(\w+\s?){1,3}"],
+    [
+      r"\d+",
+      r"^(yes|no)$",
+      r"\(a+\)+",
+      r"([*])+",
+      r"(ab)+",
+      r"a+?b",
+      r"(\w+\s?){1,3}",
+      # 以下三条是「组内只有 ?（有界量词）」的线性模式：复核 A 实测曾被误拒。
+      # ? 每次迭代最多消耗 1 个字符，全部收缩路径是线性的，不构成指数回溯。
+      r"(ab?c)+",
+      r"(\d\s?)+",
+      r"(a?){2,}",
+    ],
   )
   def test_regex_safe_pattern_accepted(self, pattern: str) -> None:
-    """普通量词、有界重复、转义括号、字符类里的字面量量词都不得被预检误伤。"""
+    """普通量词、有界重复、转义括号、字符类量词、有界 ? 都不得被预检误伤。"""
     passed, _ = RegexMatcher().match("(123) aab", _spec("regex", pattern))
     assert isinstance(passed, bool)
 
