@@ -8,6 +8,11 @@
 本模块负责每种 type 的判定语义。两层都不能省——契约层管「用例文件能不能读进来」，
 本模块管「读进来的期望怎么判」。
 
+两个对外入口分工明确：``match_expected`` 只回答「通过 / 不通过」，是判定语义的
+唯一出口；``score_response``（D23）在其之上补齐产物字段，把结论包成完整的
+``Score``（分数、评分器标识、命中标签、权重归一化与缺字段诊断元数据），供批量
+执行器直接落库——判定本身仍由匹配器决定，包装层不改判。
+
 判定结果与异常是两件事，本模块严格区分四类出口：
 
 1. **判定不通过** → 返回 ``(False, 原因)``，属于**被测应用的表现**。``(bool, str)``
@@ -45,7 +50,8 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .models.testcase import ExpectedSpec, ExpectedType
+from .models.score import Score
+from .models.testcase import ExpectedSpec, ExpectedType, TestCase
 
 # 通过时的固定说明：调用方无需区分「哪种匹配器通过」，需要细节时应看失败分支
 _PASS = "通过"
@@ -806,3 +812,102 @@ def match_expected(response: str, spec: ExpectedSpec) -> tuple[bool, str]:
     # 不静默返回 False：未知类型既不是「被测应用不通过」，也不该被计入通过率
     raise ValueError(f"未注册的期望类型: {spec.type!r}（当前支持 {sorted(_MATCHERS)}）")
   return matcher(response, spec)
+
+
+def _normalize_weights(weights: Mapping[str, float]) -> tuple[dict[str, float], bool]:
+  """把用例声明的维度权重归一化到总和 1.0；无可归一的比例时退回默认等权。
+
+  只做一次除法，不做截断与四舍五入：归一化后的元数据要能反推出原始比例，
+  否则「权重 2:1」与「权重 200:100」在报告里会呈现为两种无法解释的配置。
+  负值 / NaN / +inf 不在此处校验——契约层 ``TestCase.weights`` 的
+  ``ge=0`` + ``allow_inf_nan=False`` + 非负校验器已在边界处拦下，重复校验只会
+  让同一口径散落在两处、日后改一处漏一处。
+
+  Args:
+    weights: 维度名 → 相对权重，取自 ``case.weights``（值非负且有限）。
+
+  Returns:
+    tuple[dict[str, float], bool]: 第一项是归一化后的权重（总和 1.0；空 dict 得到
+      空映射，全零权重按维度数等分），第二项标记是否走了默认等权。
+  """
+  if not weights:
+    # 完全没有声明维度：没有可分配的份额，空映射是唯一诚实的答案
+    return {}, True
+  total = sum(weights.values())
+  if total <= 0.0:
+    # 全零 = 「声明了维度但没给相对比例」，按维度数等分；显式写 0.0 的维度同样
+    # 无法与「忘填」区分，故一律等权，而不是造出 0/0
+    share = 1.0 / len(weights)
+    return {name: share for name in weights}, True
+  return {name: value / total for name, value in weights.items()}, False
+
+
+def score_response(response: str, case: TestCase) -> Score:
+  """把一条用例的判定结论升级为完整的 ``Score``（结构化 rubric 评分入口）。
+
+  判定语义完全由匹配器决定，本函数**不改判**：它只调用 ``match_expected`` 拿到
+  ``(passed, reason)``，再补齐批量执行器落库所需的其余字段（分数、评分器标识、
+  命中标签），并把 rubric 侧的配置诊断写进 ``metadata``。
+
+  **权重归一化**：读 ``case.weights``（维度名 → 相对权重）。总和 > 0 时按
+  ``value / sum`` 归一化到总和 1.0，结果记入 ``metadata["normalized_weights"]``；
+  空 dict 或全零权重退回默认等权（每个已声明维度取 ``1 / 维度数``，空 dict 得到
+  空映射），并置 ``metadata["default_equal_weight"] = True``。负值 / NaN / inf
+  由契约层 ``TestCase.weights`` 拦截，本函数不重复校验。
+
+  **缺字段策略**：当前 ``TestCase.expected`` 是单条 ``ExpectedSpec``，判定结果
+  只有一个整体维度，于是 ``weights`` 里声明的维度名**都没有对应的分维度得分**，
+  全部属于「声明但未消费」。这类维度按设计**不报错、不抛异常**：它可能是为未来
+  多维断言（``all`` 的 ``sub_specs`` 按维度加权）预留的配置，也可能是维度名写错
+  ——单条断言下两者无法区分，静默吞掉会掩盖写错，硬拦截会把预留配置判死。故全量
+  记入 ``metadata["unclaimed_weights"]``（按名字排序，便于逐条比对），由上游决定
+  告警还是忽略。待多维度部分得分接线后，被 ``sub_specs`` 真正消费的维度会从这份
+  清单里消失，该差异本身就是接线是否生效的证据。
+
+  **matched_tags 的业务层约束**：``Score.matched_tags`` 只承载
+  ``case.score_tags`` 中**已注册**的 ``name``。契约层做不到这条校验（``Score``
+  构造时不持有 ``case``），只能由本评分器保证：任何写入 ``matched_tags`` 的标签
+  必须先在 ``case.score_tags`` 中注册。今天八类确定性匹配器都不产出标签，故
+  ``matched_tags`` 恒为空 list，不构成拦截，只做记录——``metadata["expected_tags"]``
+  是全部已注册标签，``metadata["matched_tags"]`` 是同一份命中清单的快照，上游据此
+  算命中覆盖率时不必同时持有 case。
+
+  **分数**：单条断言没有部分得分，``passed`` 为真时 1.0、否则 0.0。归一化权重
+  今天**不参与**这个数字；多维度加权（``all`` 的 ``sub_specs`` 按权重合并）待后续
+  多断言场景接线，本日只建立框架与元数据（待补充：sub_specs 加权求和）。
+
+  Args:
+    response: 被测应用返回的原始输出文本。
+    case: 用例，提供期望规范、维度权重与评分标签。
+
+  Returns:
+    Score: 六个字段全部填充的评分产物；``scorer`` 取 ``case.expected.type``
+      （与 ``Score.scorer`` 的描述口径对齐），``reason`` 取自匹配器（通过时为
+      「通过」，失败时含差异定位）。
+
+  Raises:
+    ValueError: 原样传播 ``match_expected`` 的用例侧 / 不可判错误（空期望串、
+      未注册类型、非法或过深 JSON 等）。本函数不吞异常、不新增异常类型——把
+      不可判压成 0.0 会让失败率虚高，压成 1.0 会让它虚高。
+  """
+  passed, reason = match_expected(response, case.expected)
+  normalized_weights, default_equal_weight = _normalize_weights(case.weights)
+  expected_tags = [tag.name for tag in case.score_tags]
+  # 匹配器尚不产出标签：这一刻的命中清单为空，字段与元数据快照同源
+  matched_tags: list[str] = []
+  metadata: dict[str, Any] = {
+    "normalized_weights": normalized_weights,
+    "default_equal_weight": default_equal_weight,
+    # 单条断言下所有声明维度都未被消费（见 docstring 的缺字段策略）
+    "unclaimed_weights": sorted(case.weights),
+    "expected_tags": expected_tags,
+    "matched_tags": list(matched_tags),
+  }
+  return Score(
+    score=1.0 if passed else 0.0,
+    reason=reason,
+    scorer=case.expected.type,
+    passed=passed,
+    matched_tags=matched_tags,
+    metadata=metadata,
+  )

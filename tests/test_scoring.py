@@ -12,7 +12,10 @@
 - 契约层 ``ExpectedType`` 的七类合法取值与非法取值拦截；
 - D22 新增两类（``all`` / ``agent``）：组合断言的**首个失败定位**与不可判传播、
   Agent 工具调用断言的参数层（``assert_args``）判定。顺序层 / 工具层顺延 D31，
-  本文件只固化「``order`` / ``tools`` 出现即忽略」这一现状。
+  本文件只固化「``order`` / ``tools`` 出现即忽略」这一现状；
+- D23 新增 ``score_response``：判定结论到 ``Score`` 的包装、字段级权重归一化、
+  缺字段（声明但未消费的维度）策略、``matched_tags`` 的业务层登记口径，以及
+  匹配器异常的原样传播。
 
 全部用例纯本地判定，不发起任何网络调用（零 key）；Agent 用例的模型输出是硬编码
 JSON 字符串，不调用任何真实模型。
@@ -37,6 +40,7 @@ from aquamind.scoring import (
   KeywordsMatcher,
   RegexMatcher,
   match_expected,
+  score_response,
 )
 
 
@@ -861,3 +865,151 @@ class TestAgentMatcher:
       True,
       "通过",
     )
+
+
+# 与 rubric_case 的 exact 期望逐字符相等：包装层不应改动判定结论
+_PASSING_RESPONSE = "水面温度 21.5 摄氏度"
+
+
+@pytest.fixture(name="rubric_case")
+def fixture_rubric_case() -> TestCase:
+  """最小 exact 用例（无条件权重、无标签），作为 rubric 包装测试的公共起点。"""
+  return TestCase(
+    input="现在的水温是多少？",
+    expected=ExpectedSpec(type="exact", value=_PASSING_RESPONSE),
+  )
+
+
+class TestScoreResponse:
+  """score_response：判定结论 → 完整 ``Score`` 的包装、权重归一化与缺字段策略。
+
+  本类只锁「包装」相关的行为：判定语义本身由各匹配器类负责，故这里不重复覆盖
+  exact / contains / regex 的判定细节，只验证 scorer 标识随之正确、异常不被吞。
+  """
+
+  def test_pass_yields_full_score(self, rubric_case: TestCase) -> None:
+    """单条断言通过：score=1.0、passed=True、scorer 取 expected.type。"""
+    score = score_response(_PASSING_RESPONSE, rubric_case)
+    assert score.passed is True
+    assert score.score == 1.0
+    assert score.scorer == "exact"
+    # 通过时说明沿用匹配器的固定口径，包装层不改写
+    assert score.reason == "通过"
+
+  def test_fail_yields_zero_score(self, rubric_case: TestCase) -> None:
+    """单条断言不通过：score=0.0，reason 保留匹配器的差异定位。"""
+    score = score_response("21.5", rubric_case)
+    assert score.passed is False
+    assert score.score == 0.0
+    # 失败原因必须能回答「差在哪」，不能被包装层替换成通用文案
+    assert "期望='" in score.reason
+    assert "实际=" in score.reason
+
+  def test_empty_weights_defaults_to_equal_weight(self, rubric_case: TestCase) -> None:
+    """weights 为空 dict：走默认等权，且归一化结果为空映射（没有可分配的维度）。"""
+    assert rubric_case.weights == {}
+    metadata = score_response(_PASSING_RESPONSE, rubric_case).metadata
+    assert metadata["default_equal_weight"] is True
+    assert metadata["normalized_weights"] == {}
+
+  def test_weights_normalized_to_unit_sum(self, rubric_case: TestCase) -> None:
+    """2:1 的权重归一化为 2/3 : 1/3，原始比例可由元数据反推。"""
+    case = rubric_case.model_copy(
+      update={"weights": {"accuracy": 2.0, "completeness": 1.0}},
+      deep=True,
+    )
+    metadata = score_response(_PASSING_RESPONSE, case).metadata
+    assert metadata["default_equal_weight"] is False
+    normalized = metadata["normalized_weights"]
+    assert normalized["accuracy"] == pytest.approx(2.0 / 3.0)
+    assert normalized["completeness"] == pytest.approx(1.0 / 3.0)
+    assert sum(normalized.values()) == pytest.approx(1.0)
+
+  def test_all_zero_weights_fall_back_to_equal_weight(self, rubric_case: TestCase) -> None:
+    """全零权重无法给出相对比例：退回等权，而不是产出 0/0 或全零份额。"""
+    case = rubric_case.model_copy(update={"weights": {"a": 0.0, "b": 0.0}}, deep=True)
+    metadata = score_response(_PASSING_RESPONSE, case).metadata
+    assert metadata["default_equal_weight"] is True
+    assert metadata["normalized_weights"] == {"a": 0.5, "b": 0.5}
+
+  def test_partial_zero_weight_is_not_default(self, rubric_case: TestCase) -> None:
+    """显式声明的 0 权重在总和 > 0 时被保留：0 是配置，不等于「未声明」。"""
+    case = rubric_case.model_copy(
+      update={"weights": {"accuracy": 0.0, "completeness": 2.0}}, deep=True
+    )
+    metadata = score_response(_PASSING_RESPONSE, case).metadata
+    assert metadata["default_equal_weight"] is False
+    assert metadata["normalized_weights"] == {"accuracy": 0.0, "completeness": 1.0}
+
+  def test_unclaimed_weights_records_declared_but_unconsumed(
+    self, rubric_case: TestCase
+  ) -> None:
+    """缺字段策略：单条断言下所有声明维度都未被消费，须记录而非报错。"""
+    case = rubric_case.model_copy(
+      update={"weights": {"accuracy": 1.0, "completeness": 0.5}}, deep=True
+    )
+    # 不抛异常是策略的一部分：这是配置诊断，不是用例错误
+    score = score_response(_PASSING_RESPONSE, case)
+    # 按名字排序，便于与用例文件逐条比对
+    assert score.metadata["unclaimed_weights"] == ["accuracy", "completeness"]
+
+  def test_matched_tags_registry_recorded(self, rubric_case: TestCase) -> None:
+    """标签口径：expected_tags 记录已注册标签，matched_tags 当前恒为空。"""
+    case = rubric_case.model_copy(
+      update={"score_tags": [ScoreTag(name="accuracy", weight=1.0)]}, deep=True
+    )
+    score = score_response(_PASSING_RESPONSE, case)
+    assert score.metadata["expected_tags"] == ["accuracy"]
+    # 匹配器不产出标签：命中清单为空是现状，不是漏记
+    assert score.matched_tags == []
+    assert score.metadata["matched_tags"] == []
+
+  def test_value_error_propagates(self, rubric_case: TestCase) -> None:
+    """匹配器的 ValueError（未注册类型 / 用例写错）必须原样上抛，不被吞成 0 分。"""
+    # judge 是契约层合法取值、但尚无确定性匹配器：走 match_expected 的未注册分支
+    unregistered = rubric_case.model_copy(
+      update={"expected": {"type": "judge", "value": "随便"}}, deep=True
+    )
+    with pytest.raises(ValueError, match="未注册的期望类型"):
+      score_response("随便", unregistered)
+
+    # 用例侧错误（空正则）同属不可判，同样不得压成分数
+    broken = rubric_case.model_copy(
+      update={"expected": {"type": "regex", "value": ""}}, deep=True
+    )
+    with pytest.raises(ValueError, match="正则"):
+      score_response("随便", broken)
+
+  def test_score_object_is_complete(self, rubric_case: TestCase) -> None:
+    """返回的 Score 六字段齐备，metadata 至少含三个约定键。"""
+    case = rubric_case.model_copy(
+      update={
+        "weights": {"accuracy": 1.0},
+        "score_tags": [ScoreTag(name="accuracy")],
+      },
+      deep=True,
+    )
+    score = score_response(_PASSING_RESPONSE, case)
+    # Score 是 frozen + extra=forbid：这里既能读全字段，也证明构造走了完整校验
+    assert score.scorer == "exact"
+    assert score.reason != ""
+    assert score.passed is True
+    assert 0.0 <= score.score <= 1.0
+    assert {"normalized_weights", "unclaimed_weights", "expected_tags"} <= set(score.metadata)
+
+  @pytest.mark.parametrize(
+    ("type_name", "value", "response"),
+    [
+      ("exact", "21.5", "21.5"),
+      ("contains", "21.5", "当前水温 21.5 摄氏度"),
+      ("regex", r"21\.\d", "当前水温 21.5 摄氏度"),
+    ],
+  )
+  def test_scorer_follows_expected_type(
+    self, type_name: ExpectedType, value: str, response: str
+  ) -> None:
+    """三类断言各自通过时 scorer 均等于 expected.type（与 Score.scorer 描述对齐）。"""
+    case = TestCase(input="x", expected=ExpectedSpec(type=type_name, value=value))
+    score = score_response(response, case)
+    assert score.passed is True
+    assert score.scorer == type_name
