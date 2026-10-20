@@ -819,9 +819,9 @@ def _normalize_weights(weights: Mapping[str, float]) -> tuple[dict[str, float], 
 
   只做一次除法，不做截断与四舍五入：归一化后的元数据要能反推出原始比例，
   否则「权重 2:1」与「权重 200:100」在报告里会呈现为两种无法解释的配置。
-  负值 / NaN / +inf 不在此处校验——契约层 ``TestCase.weights`` 的
-  ``ge=0`` + ``allow_inf_nan=False`` + 非负校验器已在边界处拦下，重复校验只会
-  让同一口径散落在两处、日后改一处漏一处。
+  负值 / NaN / +inf 不在此处校验——契约层 ``TestCase.weights`` 的值类型是
+  ``Annotated[float, Field(allow_inf_nan=False)]``，负值再由 ``field_validator``
+  的非负校验器拦下；重复校验只会让同一口径散落在两处、日后改一处漏一处。
 
   Args:
     weights: 维度名 → 相对权重，取自 ``case.weights``（值非负且有限）。
