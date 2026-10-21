@@ -1188,6 +1188,20 @@ class TestAggregateScores:
     # 排序后为 0.1 / 0.2 / 0.3 / 0.4，中间两个 0.2 与 0.3 的平均是 0.25
     assert summary["median"] == pytest.approx(0.25)
 
+  def test_asymmetric_median_separates_from_mean(self) -> None:
+    """非对称数据：median 与 mean 必须分离（防 M7 变异：median 被 mean 顶替）。"""
+    # [1.0, 1.0, 0.0] 排序后为 0.0 / 1.0 / 1.0：median=1.0，mean=2/3，两者不等
+    summary = aggregate_scores(
+      [_score(1.0, True), _score(1.0, True), _score(0.0, False)]
+    )
+    # median 取中间值 1.0，不是均值 2/3——若实现误用 mean，此断言即红
+    assert summary["median"] == pytest.approx(1.0)
+    # mean 独立断言为 2/3，与 median 1.0 形成口径分离
+    assert summary["mean"] == pytest.approx(2.0 / 3.0)
+    assert summary["pass_rate"] == pytest.approx(2.0 / 3.0)
+    assert summary["min_score"] == 0.0
+    assert summary["max_score"] == 1.0
+
 
 class TestKappaCalibrationSet:
   """κ 校准集：条数区间、格式合法、八类覆盖、可批量评分与可聚合。"""
