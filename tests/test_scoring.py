@@ -15,7 +15,11 @@
   本文件只固化「``order`` / ``tools`` 出现即忽略」这一现状；
 - D23 新增 ``score_response``：判定结论到 ``Score`` 的包装、字段级权重归一化、
   缺字段（声明但未消费的维度）策略、``matched_tags`` 的业务层登记口径，以及
-  匹配器异常的原样传播。
+  匹配器异常的原样传播；
+- D24 新增 ``score_batch`` / ``aggregate_scores``：等长批量评分（顺序对应、异常
+  不吞、空批量）与八键固定聚合（均值 / 通过率 / 中位数 / 极值，空集与可复算），
+  以及 κ 校准集（``tests/fixtures/kappa_calibration_set.jsonl``）的加载、格式
+  校验、八类匹配器覆盖与批量评分可用性。
 
 全部用例纯本地判定，不发起任何网络调用（零 key）；Agent 用例的模型输出是硬编码
 JSON 字符串，不调用任何真实模型。
@@ -24,11 +28,16 @@ JSON 字符串，不调用任何真实模型。
 from __future__ import annotations
 
 import json
+from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from aquamind.dataset import validate_dataset
+from aquamind.loaders import load_cases
+from aquamind.models.score import Score
 from aquamind.models.testcase import ExpectedSpec, ExpectedType, ScoreTag, TestCase
 from aquamind.scoring import (
   AgentMatcher,
@@ -39,7 +48,9 @@ from aquamind.scoring import (
   JsonMatcher,
   KeywordsMatcher,
   RegexMatcher,
+  aggregate_scores,
   match_expected,
+  score_batch,
   score_response,
 )
 
@@ -1013,3 +1024,238 @@ class TestScoreResponse:
     score = score_response(response, case)
     assert score.passed is True
     assert score.scorer == type_name
+
+
+# 仓库根按测试文件位置反推，不依赖运行目录（与 test_d16_demo_cassettes 同口径）
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+# κ 校准集是入库的冻结交付物（D24），测试只读；路径固定在此，不做多目录兜底
+_KAPPA_SET_PATH = _REPO_ROOT / "tests" / "fixtures" / "kappa_calibration_set.jsonl"
+# 确定性匹配器的八类全集；judge 需真实模型调用，不属于校准集的确定性基准
+_CALIBRATION_TYPES = frozenset(
+  {"exact", "regex", "contains", "excludes", "keywords", "json", "all", "agent"}
+)
+
+
+def _score(value: float, passed: bool) -> Score:
+  """构造一条最小合法 ``Score``，只关心分数与通过标志两个字段。
+
+  Args:
+    value: 分数，须在 0.0-1.0 内（Score 契约约束）。
+    passed: 是否通过；刻意允许与 ``value`` 不绑定（契约不强制二者一致）。
+
+  Returns:
+    Score: 用于聚合测试的评分产物。
+  """
+  return Score(score=value, reason="测试构造", scorer="exact", passed=passed)
+
+
+def _batch_cases(*values: str) -> list[TestCase]:
+  """构造一组 exact 用例：第 i 条期望 ``values[i]``。
+
+  Args:
+    *values: 每条用例的期望输出。
+
+  Returns:
+    list[TestCase]: 与入参等长的用例列表，input 按序号生成以便识别。
+  """
+  return [
+    TestCase(input=f"第 {index} 问", expected=ExpectedSpec(type="exact", value=value))
+    for index, value in enumerate(values)
+  ]
+
+
+@pytest.fixture(name="calibration_cases", scope="module")
+def fixture_calibration_cases() -> list[TestCase]:
+  """从真实文件加载 κ 校准集（测试不硬编码任何用例内容）。"""
+  return load_cases(_KAPPA_SET_PATH)
+
+
+class TestScoreBatch:
+  """score_batch：批量评分的位置配对、等长校验、空批量与异常原样传播。"""
+
+  def test_order_and_equivalence(self) -> None:
+    """返回第 i 项必须对应第 i 对 (case, response)，且与单条评分逐字段一致。"""
+    cases = _batch_cases("a0", "a1", "a2")
+    responses = ["a0", "x1", "a2"]
+    scores = score_batch(cases, responses)
+    assert len(scores) == 3
+    # 中间一条不通过：如果批量层错位配对，这个序列就会与单条评分对不上
+    assert [score.passed for score in scores] == [True, False, True]
+    for index, (case, response) in enumerate(zip(cases, responses)):
+      # Score 是 frozen + extra=forbid：整体相等即证明六个字段全部一致
+      assert scores[index] == score_response(response, case)
+
+  def test_empty_lists_return_empty(self) -> None:
+    """空批量是合法边界输入：等长（0 == 0）且不抛异常，返回空列表。"""
+    assert score_batch([], []) == []
+
+  def test_length_mismatch_raises(self) -> None:
+    """长度不等必须当场拦下，消息含两个长度（而不是按较短一方截断）。"""
+    with pytest.raises(ValueError, match=r"cases=3, responses=2"):
+      score_batch(_batch_cases("a0", "a1", "a2"), ["a0", "a1"])
+
+  def test_value_error_propagates(self) -> None:
+    """单条用例抛出的 ValueError 不得被批量层吞掉或压成 0 分。"""
+    cases = [
+      TestCase(input="正常", expected=ExpectedSpec(type="exact", value="a0")),
+      # judge 契约合法但无确定性匹配器：走 match_expected 的未注册分支
+      TestCase(input="不可判", expected=ExpectedSpec(type="judge", value="a1")),
+    ]
+    with pytest.raises(ValueError, match="未注册的期望类型"):
+      score_batch(cases, ["a0", "a1"])
+
+
+class TestAggregateScores:
+  """aggregate_scores：八键固定输出、边界场景与可复算口径。"""
+
+  @pytest.fixture(name="mixed_scores")
+  def fixture_mixed_scores(self) -> list[Score]:
+    """1.0 通过 / 0.5 通过 / 0.0 失败：均值与通过率刻意不相等，便于区分两个口径。"""
+    return [_score(1.0, True), _score(0.5, True), _score(0.0, False)]
+
+  def test_mixed_scores(self, mixed_scores: list[Score]) -> None:
+    """三个分数的聚合：均值、通过率、中位数、极值与通过/失败计数。"""
+    summary = aggregate_scores(mixed_scores)
+    assert summary["count"] == 3
+    # (1.0 + 0.5 + 0.0) / 3 = 0.5
+    assert summary["mean"] == pytest.approx(0.5)
+    # pass_rate 是 passed 比例（2/3），不是「分数 ≥ 某阈值」——与 mean 0.5 不同
+    assert summary["pass_rate"] == pytest.approx(2.0 / 3.0)
+    assert summary["median"] == pytest.approx(0.5)
+    assert summary["min_score"] == 0.0
+    assert summary["max_score"] == 1.0
+    assert summary["passed"] == 2
+    assert summary["failed"] == 1
+    # 计数自洽：失败数由 count - passed 得到，两者之和恒等于 count
+    assert summary["passed"] + summary["failed"] == summary["count"]
+
+  def test_all_passed(self) -> None:
+    """全通过：pass_rate=1.0，failed=0。"""
+    summary = aggregate_scores([_score(0.8, True), _score(0.9, True), _score(1.0, True)])
+    assert summary["pass_rate"] == 1.0
+    assert summary["passed"] == 3
+    assert summary["failed"] == 0
+
+  def test_all_failed(self) -> None:
+    """全失败：pass_rate=0.0，passed=0（即使分数非零也不计入通过）。"""
+    summary = aggregate_scores([_score(0.0, False), _score(0.2, False), _score(0.4, False)])
+    assert summary["pass_rate"] == 0.0
+    assert summary["passed"] == 0
+    assert summary["failed"] == 3
+
+  def test_empty_list(self) -> None:
+    """空列表：count=0，其余数值字段为 0.0（不是缺键、也不抛异常）。"""
+    summary = aggregate_scores([])
+    assert summary == {
+      "count": 0,
+      "mean": 0.0,
+      "pass_rate": 0.0,
+      "median": 0.0,
+      "min_score": 0.0,
+      "max_score": 0.0,
+      "passed": 0,
+      "failed": 0,
+    }
+    # 空集的均值得是 float 的 0.0：返回 int 0 会让上游的除法/格式化口径漂移
+    assert isinstance(summary["mean"], float)
+    assert isinstance(summary["count"], int)
+
+  def test_recomputable(self, mixed_scores: list[Score]) -> None:
+    """相同输入两次聚合同值，且输入未被修改（纯函数、无副作用）。"""
+    first = aggregate_scores(mixed_scores)
+    second = aggregate_scores(mixed_scores)
+    assert first == second
+    # 输入列表与其中元素都不得被就地改写
+    assert [score.score for score in mixed_scores] == [1.0, 0.5, 0.0]
+    # 均值可由原始分数独立复算：报告数字与原始 Score 列表互相印证
+    assert first["mean"] == pytest.approx(
+      sum(score.score for score in mixed_scores) / len(mixed_scores)
+    )
+
+  def test_single_element(self) -> None:
+    """单元素：median / mean / min / max 全部等于该分数。"""
+    summary = aggregate_scores([_score(0.42, False)])
+    assert summary["median"] == pytest.approx(0.42)
+    assert summary["mean"] == pytest.approx(0.42)
+    assert summary["min_score"] == pytest.approx(0.42)
+    assert summary["max_score"] == pytest.approx(0.42)
+
+  def test_even_count_median(self) -> None:
+    """偶数个元素：中位数取中间两个的平均，而不是下中位数。"""
+    summary = aggregate_scores(
+      [_score(0.4, True), _score(0.1, False), _score(0.3, True), _score(0.2, False)]
+    )
+    # 排序后为 0.1 / 0.2 / 0.3 / 0.4，中间两个 0.2 与 0.3 的平均是 0.25
+    assert summary["median"] == pytest.approx(0.25)
+
+
+class TestKappaCalibrationSet:
+  """κ 校准集：条数区间、格式合法、八类覆盖、可批量评分与可聚合。"""
+
+  def test_loads_expected_size(self, calibration_cases: list[TestCase]) -> None:
+    """校准集可被 load_cases 加载为 30-50 条合法 TestCase（D24 验收区间）。"""
+    assert 30 <= len(calibration_cases) <= 50
+    # input 非空是校准集的结构要求：空输入无法与任何响应配对
+    assert all(case.input for case in calibration_cases)
+
+  def test_dataset_validates(self) -> None:
+    """validate_dataset 通过（逐行收集错误的校验路径，与 CI 门禁同口径）。"""
+    result = validate_dataset(_KAPPA_SET_PATH)
+    assert result.ok is True, [error.message for error in result.errors]
+    assert result.errors == []
+
+  def test_eight_matchers_covered(self, calibration_cases: list[TestCase]) -> None:
+    """八类确定性匹配器各至少 1 条；judge 不得混入（需真实模型调用）。"""
+    counts = Counter(case.expected.type for case in calibration_cases)
+    assert set(counts) == _CALIBRATION_TYPES
+    assert all(counts[type_name] >= 1 for type_name in _CALIBRATION_TYPES)
+    # 各类条数之和就是集合规模，防止「类别对了但漏统计」
+    assert sum(counts.values()) == len(calibration_cases)
+
+  def test_batch_scoring_uses_file_responses(
+    self, calibration_cases: list[TestCase]
+  ) -> None:
+    """用文件自带的 pass_response 批量评分：全部通过，scorer 与期望类型一一对应。"""
+    responses = [str(case.context["pass_response"]) for case in calibration_cases]
+    scores = score_batch(calibration_cases, responses)
+    assert len(scores) == len(calibration_cases)
+    assert all(score.passed for score in scores)
+    # 批量层不改判：每条 scorer 就是该用例的 expected.type
+    assert [score.scorer for score in scores] == [
+      case.expected.type for case in calibration_cases
+    ]
+
+  def test_aggregate_is_recomputable(self, calibration_cases: list[TestCase]) -> None:
+    """对批量评分结果聚合，口径可由原始分数独立复算。"""
+    responses = [str(case.context["pass_response"]) for case in calibration_cases]
+    scores = score_batch(calibration_cases, responses)
+    summary = aggregate_scores(scores)
+    assert summary["count"] == len(calibration_cases)
+    assert summary["pass_rate"] == 1.0
+    assert summary["failed"] == 0
+    # 全通过时三者的关系是可复算的：mean/median/min/max 都收敛到 1.0
+    expected_mean = sum(score.score for score in scores) / len(scores)
+    assert summary["mean"] == pytest.approx(expected_mean)
+    assert summary["median"] == pytest.approx(1.0)
+    assert summary["min_score"] == pytest.approx(1.0)
+    assert summary["max_score"] == pytest.approx(1.0)
+
+  def test_fail_responses_rejected_or_unjudgeable(
+    self, calibration_cases: list[TestCase]
+  ) -> None:
+    """样例失败响应必须判为不通过；标记不可判的必须抛 ValueError（不被压成分数）。"""
+    judgeable = 0
+    unjudgeable = 0
+    for index, case in enumerate(calibration_cases):
+      fail_response = str(case.context["fail_response"])
+      if case.context.get("fail_response_judgeable", True):
+        score = score_response(fail_response, case)
+        assert score.passed is False, f"第 {index + 1} 条失败样例被判为通过"
+        judgeable += 1
+      else:
+        with pytest.raises(ValueError):
+          score_response(fail_response, case)
+        unjudgeable += 1
+    # 两类路径都必须被校准集覆盖到，否则「不可判传播」只是纸面要求
+    assert judgeable > 0
+    assert unjudgeable > 0

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -911,3 +912,100 @@ def score_response(response: str, case: TestCase) -> Score:
     matched_tags=matched_tags,
     metadata=metadata,
   )
+
+
+def score_batch(cases: list[TestCase], responses: list[str]) -> list[Score]:
+  """批量评分：把「第 i 条用例 + 第 i 个输出」逐条交给 ``score_response``。
+
+  配对只依据位置：返回列表第 i 项对应入参第 i 对 ``(case, response)``。调用方因此
+  不必在用例里额外携带 id，就能把分数按顺序并回原始结果；代价是顺序错了无从察觉，
+  故长度不等必须当场拦下（见 ``Raises``），不允许按较短的一方截断——截断后的
+  分数序列仍「看起来完整」，却已经和用例错位。
+
+  **异常口径**：本函数**不捕获任何异常**。匹配器抛出的 ``ValueError``（未注册类型、
+  用例写错、输出不可判）原样向上传播，而不是压成 ``Score(score=0.0)``。理由与
+  ``score_response`` 一致：把不可判压成 0 分会让通过率虚低，而把**用例写错**
+  混进失败样本后，这批分数还会污染 κ 标定的基准数据，且无法从产物里区分成因。
+  需要「逐条判定 + 统计不可判条数」的调用方应自行包装 try/except（D22 批量执行器
+  的口径），本函数只负责最朴素的等长批量。
+
+  Args:
+    cases: 用例列表，与 ``responses`` 按位置一一配对。
+    responses: 被测应用输出列表，长度必须与 ``cases`` 相同。
+
+  Returns:
+    list[Score]: 与输入等长的评分结果，第 i 项对应第 i 个 ``(case, response)`` 对；
+      两个入参均为空列表时返回空列表（空批量是合法边界输入，不是错误）。
+
+  Raises:
+    ValueError: ``len(cases) != len(responses)`` 时抛出，消息同时给出两个长度；
+      以及 ``score_response`` / 匹配器抛出的用例侧或不可判 ``ValueError``，均原样传播。
+  """
+  if len(cases) != len(responses):
+    raise ValueError(
+      f"用例与响应数量不等: cases={len(cases)}, responses={len(responses)}"
+    )
+  # strict=True 与上面的显式校验重复，但它把「等长」这条契约钉在消费点：将来若有人
+  # 放宽上面的校验，错位配对仍会立刻报错，而不是按较短一方静默截断
+  return [
+    score_response(response, case) for case, response in zip(cases, responses, strict=True)
+  ]
+
+
+def aggregate_scores(scores: list[Score]) -> dict[str, Any]:
+  """把一批 ``Score`` 聚合为固定八键的汇总视图（纯函数、可复算）。
+
+  返回的键集合是**固定**的：上游取 ``mean`` / ``pass_rate`` 时不必先判断「有没有
+  数据」，空批量也返回同一套键（数值为 0.0），从而避免日报/门禁各写一份空集分支。
+
+  **可复算**：八个键全部在调用时由入参重新计算，不读缓存、不写回输入，故同一份
+  ``scores`` 调用两次得到完全相同的 dict——报告里的任何汇总数字都能由原始 Score
+  列表独立复现，这是「测量自证」在聚合层的落点。
+
+  **归一化**：``mean`` 与 ``pass_rate`` 天然落在 0.0-1.0（``Score.score`` 已被契约
+  约束在 [0, 1]，``passed`` 是布尔），故这里不做截断。截断会把上游的越界错误藏起来
+  ——绕过契约构造出的坏分数应当暴露，而不是被悄悄压回合法区间。
+
+  注意 ``mean`` 与 ``pass_rate`` 回答的是**两个不同问题**：前者是分数的算术平均，
+  后者是 ``passed`` 为真的比例。二者不必相等（``Score.passed`` 由评分器按自身阈值
+  判定，契约不强制它与 ``score`` 的数值绑定），报告里引用哪一个必须写清口径。
+
+  Args:
+    scores: 评分结果列表，元素通常是 ``score_response`` / ``score_batch`` 的产物。
+
+  Returns:
+    dict[str, Any]: 固定八个键：
+      - ``count``: 输入条数；
+      - ``mean``: 算术平均分 ``sum(score) / count``，0.0-1.0；
+      - ``pass_rate``: 通过率 ``passed / count``，0.0-1.0；
+      - ``median``: 中位数（排序后取中间值，偶数个取中间两个的平均）；
+      - ``min_score`` / ``max_score``: 最小 / 最大分；
+      - ``passed`` / ``failed``: 通过数 / 失败数，两者之和恒等于 ``count``。
+      空列表返回 ``count=0``、四个数值字段为 0.0、``passed`` / ``failed`` 为 0。
+  """
+  count = len(scores)
+  if count == 0:
+    # 空批量是合法输入：返回同一套键的全零结果，上游无需为空集单写分支
+    return {
+      "count": 0,
+      "mean": 0.0,
+      "pass_rate": 0.0,
+      "median": 0.0,
+      "min_score": 0.0,
+      "max_score": 0.0,
+      "passed": 0,
+      "failed": 0,
+    }
+  values = [score.score for score in scores]
+  passed_count = sum(1 for score in scores if score.passed)
+  return {
+    "count": count,
+    "mean": sum(values) / count,
+    "pass_rate": passed_count / count,
+    # statistics.median 已按「偶数个取中间两个平均」定义，与字段口径一字不差
+    "median": statistics.median(values),
+    "min_score": min(values),
+    "max_score": max(values),
+    "passed": passed_count,
+    "failed": count - passed_count,
+  }
