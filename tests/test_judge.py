@@ -14,7 +14,12 @@
 - 裁判后端故障：``AdapterError`` 在 Judge 边界转成 ``JudgeError``，原始异常保留在
   ``__cause__``（本次判定不可判，而非被测应用退化）；
 - prompt 构造：system 说明 JSON schema、user 携带用例描述与被测输出，两段分离；
-- 异常契约：``JudgeError`` 继承 ``AquaMindError`` 并携带 context（``str()`` 只渲染键名）。
+- 异常契约：``JudgeError`` 继承 ``AquaMindError`` 并携带 context（``str()`` 只渲染键名）；
+- 降级口径（D08）：``aevaluate_safe``（实例方法与模块级自由函数）成功返回
+  ``JudgeOutput``，失败返回 ``Unjudgeable`` 并按 ``stage``（complete / parse / contract）
+  与失败字段归因，且不把裁判原文带进结果对象；
+- 解析可追溯性（D08）：parse 阶段的 ``JudgeError.context`` 带 ``content_head`` /
+  ``content_tail`` 截断片段（各 200 字符，短输出保留全文），正文不含原文。
 
 全部用例用 ``CallableAdapter`` 注入裁判响应，不发起任何网络调用（CI 零 key），
 也不读取任何真实密钥或环境变量。
@@ -28,7 +33,14 @@ import pytest
 
 from aquamind.adapters import CallableAdapter
 from aquamind.exceptions import AdapterError, AquaMindError
-from aquamind.judge import JudgeAdapter, JudgeError, JudgeOutput, _is_same_family
+from aquamind.judge import (
+  JudgeAdapter,
+  JudgeError,
+  JudgeOutput,
+  Unjudgeable,
+  _is_same_family,
+  aevaluate_safe,
+)
 
 # 合法裁判输出：三字段齐全、类型正确、分数落在闭区间内
 _VALID_JSON = '{"passed": true, "score": 0.9, "reason": "答案正确且给出了推导过程"}'
@@ -437,3 +449,132 @@ class TestExceptionContract:
     assert excinfo.value.context["sut_family"] == "gpt-"
     assert excinfo.value.context["judge_family"] == "gpt-"
     assert "context keys" in str(excinfo.value)
+
+
+class TestSafeDegradation:
+  """降级口径：失败不抛异常，返回可计数的 Unjudgeable（D08）。"""
+
+  async def test_success_returns_judge_output(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """成功路径返回与 aevaluate 同一个 JudgeOutput，而不是第二种结论类型。"""
+    result = await mock_judge_adapter(_VALID_JSON).aevaluate_safe("2+2=?", "4")
+    assert isinstance(result, JudgeOutput)
+    assert result.model_dump() == {
+      "passed": True,
+      "score": 0.9,
+      "reason": "答案正确且给出了推导过程",
+    }
+
+  async def test_parse_failure_returns_parse_stage(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """坏 JSON 不抛异常：返回 stage=parse 的 Unjudgeable，且不携带原文。"""
+    result = await mock_judge_adapter("我觉得这个回答挺好的").aevaluate_safe("x", "y")
+    assert isinstance(result, Unjudgeable)
+    assert result.stage == "parse"
+    assert result.fields == ()
+    assert "不是合法 JSON" in result.message
+    # 原文只留在 JudgeError.context 的截断片段里，不进结果对象（会被计数、进报告）
+    assert "我觉得" not in result.message
+
+  async def test_parse_failure_keeps_error_type(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """提取段解析失败时 error_type 一并带上，报告层可按阶段再细分归因。"""
+    result = await mock_judge_adapter('{"passed": true, "score": 0.9').aevaluate_safe(
+      "x", "y"
+    )
+    assert isinstance(result, Unjudgeable)
+    assert result.stage == "parse"
+    assert result.error_type == "JSONDecodeError"
+
+  async def test_contract_failure_returns_fields(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """契约失败返回 stage=contract，并带出不合法字段（此处缺 reason）。"""
+    result = await mock_judge_adapter('{"passed": true, "score": 0.9}').aevaluate_safe(
+      "x", "y"
+    )
+    assert isinstance(result, Unjudgeable)
+    assert result.stage == "contract"
+    assert result.fields == ("reason",)
+    # 契约阶段的类型错由 fields 表达，error_type 留空（不伪造一个异常类型）
+    assert result.error_type is None
+
+  async def test_complete_failure_returns_complete_stage(self) -> None:
+    """裁判调用失败返回 stage=complete 与原始异常类型名，不抛异常。"""
+    adapter = JudgeAdapter(
+      CallableAdapter(_raise_adapter_error), "gpt-4o", "claude-3-opus"
+    )
+    result = await adapter.aevaluate_safe("x", "y")
+    assert isinstance(result, Unjudgeable)
+    assert result.stage == "complete"
+    assert result.error_type == "AdapterError"
+    assert "不可判" in result.message
+
+  async def test_module_level_function_forwards(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """模块级自由函数与实例方法同口径：成功/失败的形状完全一致。"""
+    ok = await aevaluate_safe(mock_judge_adapter(_VALID_JSON), "2+2=?", "4")
+    assert isinstance(ok, JudgeOutput)
+    bad = await aevaluate_safe(mock_judge_adapter("[1, 2]"), "x", "y")
+    assert isinstance(bad, Unjudgeable)
+    assert bad.stage == "parse"
+
+  async def test_unjudgeable_countable_by_stage(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """报告层用法：不捕获异常也能得到各阶段的不可判条数。"""
+    counter: dict[str, int] = {"complete": 0, "parse": 0, "contract": 0}
+    payloads = [_VALID_JSON, "不是 JSON", '{"passed": true}']
+    for payload in payloads:
+      result = await mock_judge_adapter(payload).aevaluate_safe("x", "y")
+      if isinstance(result, Unjudgeable):
+        counter[result.stage] += 1
+    assert counter == {"complete": 0, "parse": 1, "contract": 1}
+
+
+class TestParseErrorTraceability:
+  """解析失败的可追溯性：context 带原文首尾片段，正文不带原文（D08）。"""
+
+  async def test_long_output_keeps_head_and_tail(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """超长输出只留首尾各 200 字符：足以判断「被截断」还是「整段跑偏」。"""
+    content = "开头说明" + "。中间的无效内容" * 60 + "结尾说明"
+    assert len(content) > 400
+    with pytest.raises(JudgeError) as excinfo:
+      await mock_judge_adapter(content).aevaluate("x", "y")
+    context = excinfo.value.context
+    assert context["stage"] == "parse"
+    assert context["content_head"] == content[:200]
+    assert context["content_tail"] == content[-200:]
+    assert len(context["content_head"]) == 200
+    assert len(context["content_tail"]) == 200
+    # 正文只报「没找到 JSON 对象」，原文不外泄到 message
+    assert "开头说明" not in str(excinfo.value)
+
+  async def test_short_output_kept_in_full(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """短输出（<200 字符）首尾片段都等于全文：不为截断丢信息。"""
+    content = "裁判只回了一句话，没有 JSON"
+    with pytest.raises(JudgeError) as excinfo:
+      await mock_judge_adapter(content).aevaluate("x", "y")
+    context = excinfo.value.context
+    assert context["content_head"] == content
+    assert context["content_tail"] == content
+
+  async def test_top_level_mismatch_also_carries_snippets(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """顶层不是对象时同样带片段：这一路径的原文最容易被误当成「解析成功」。"""
+    content = '[{"passed": true, "score": 1.0, "reason": "理由"}]'
+    with pytest.raises(JudgeError) as excinfo:
+      await mock_judge_adapter(content).aevaluate("x", "y")
+    context = excinfo.value.context
+    assert context["actual_type"] == "list"
+    assert context["content_head"] == content
+    assert context["content_tail"] == content

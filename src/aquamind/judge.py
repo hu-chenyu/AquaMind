@@ -14,8 +14,9 @@
    解析后由 ``JudgeOutput`` 做强校验（``extra="forbid"``、``score`` 闭区间 0.0-1.0、
    ``passed`` 严格布尔、拒绝数字型字符串）；
 3. **不可判不等于不通过**：解析失败、字段缺失、类型不符、分数越界一律抛 ``JudgeError``
-   （UNJUDGEABLE 口径）。把它压成 ``passed=False`` 会让通过率虚低，压成 ``True`` 会让它
-   虚高——两者都会让报告上的数字「看起来正常但含义是错的」。
+   （UNJUDGEABLE 口径）。需要「逐条判定且不抛异常」的调用方走 ``aevaluate_safe``，拿到
+   ``Unjudgeable`` 取值后按 ``stage`` 计数（D08）。把它压成 ``passed=False`` 会让通过率虚低，
+   压成 ``True`` 会让它虚高——两者都会让报告上的数字「看起来正常但含义是错的」。
 
 与适配器层的关系：``JudgeAdapter`` **不继承** ``BaseAdapter``——它不是通用后端适配器，
 返回值是判定结论（``JudgeOutput``）而非 ``AdapterResponse``；内部复用已配置好的
@@ -35,7 +36,8 @@ import（测试从 ``aquamind.judge`` 导入是测试侧惯例）。``exceptions
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import Any, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
@@ -76,6 +78,12 @@ _JSON_DECODER = json.JSONDecoder()
 # 解析失败的哨兵：``"null"`` 是合法 JSON（解析结果为 None），不能用 None 表示失败，
 # 否则「输出为 null」会被误判成「需要从前缀文本里提取」
 _PARSE_FAILED = object()
+
+# 解析失败时随 context 携带的原文片段长度（首 200 / 尾 200 字符）。
+# 只放 context 不放 message：message 会随 logging.exception 进日志与报告，而裁判原文
+# 可能含用例内容甚至被测系统的敏感输出。400 字符以内的输出首尾两段已覆盖全文
+# （两段重叠是有意的：宁可重复，也不让短输出因截断丢信息）。
+_CONTENT_SNIPPET_CHARS = 200
 
 
 class JudgeError(AquaMindError):
@@ -162,6 +170,65 @@ class JudgeOutput(BaseModel):
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class Unjudgeable:
+  """一次裁判调用「没拿到可用结论」的结构化记录（UNJUDGEABLE 口径）。
+
+  与 ``JudgeError`` 的分工：异常适合「单条判定的调用方要知道为什么失败」，结果适合
+  「批量执行器要把不可判条数计进报告」。同一个失败在这两个出口上携带同一套归因
+  （``stage`` / 失败字段），区别只是「抛出」还是「返回」——不存在第二套口径。
+
+  **不带裁判原始输出**：原文只出现在 ``JudgeError.context`` 的 ``content_head`` /
+  ``content_tail`` 截断片段里供排障；结果对象会被计数、聚合甚至进报告，把原文塞进来
+  等于给敏感数据开了一条随结果传播的通道。
+
+  Attributes:
+    stage: 失败发生的阶段，取值与 ``JudgeError.context["stage"]`` 同一套字符串：
+      ``construct``（构造期校验）/ ``complete``（裁判调用）/ ``parse``（JSON 解析）/
+      ``contract``（契约校验）。报告层据此按阶段计数。``construct`` 不会由
+      ``aevaluate_safe`` 产出（构造期失败时拿不到实例），保留该取值是为了让本类型
+      能完整表达四阶段，而不是让计数表少一格。
+    message: 人类可读的失败描述（取自 ``JudgeError.message``，不含裁判原文）。
+    error_type: 触发失败的异常类型名（``complete`` / ``parse`` 阶段有值；``contract``
+      阶段的类型错已由 ``fields`` 表达，此处为 None）。
+    fields: 契约校验失败的字段名，仅 ``contract`` 阶段非空；其余阶段为空元组。
+  """
+
+  stage: str
+  message: str
+  error_type: str | None = None
+  fields: tuple[str, ...] = ()
+
+  @classmethod
+  def from_error(cls, exc: JudgeError) -> Unjudgeable:
+    """把 ``JudgeError`` 的 context 归因搬到结果对象上。
+
+    只做字段搬运，不做任何判定：``stage`` / ``error_type`` / ``fields`` 全部原样取自
+    ``exc.context``，因此「同一个失败，异常与结果说的是同一件事」。context 缺 ``stage``
+    （模块外自行 raise 的 ``JudgeError``）时留空串，不猜一个阶段——猜错会把某个阶段
+    的责任记到另一个阶段头上，而按阶段计数正是本类型的用途。
+
+    Args:
+      exc: 判定失败时抛出的异常。
+
+    Returns:
+      Unjudgeable: 携带阶段与失败字段的不可判记录。
+    """
+    raw_fields = exc.context.get("fields") or ()
+    error_type = exc.context.get("error_type")
+    return cls(
+      stage=str(exc.context.get("stage", "")),
+      message=exc.message,
+      error_type=str(error_type) if error_type is not None else None,
+      fields=tuple(str(name) for name in raw_fields),
+    )
+
+
+# 一次判定的两种结局：拿到结论，或没拿到（不可判）。调用方用 ``isinstance`` 分支即可，
+# 不需要 try/except——这正是 D08 要给的形状。
+JudgeResult: TypeAlias = JudgeOutput | Unjudgeable
+
+
 def _model_family(model: str) -> str | None:
   """返回模型名命中的族前缀；未命中任何已知前缀时返回 None。
 
@@ -205,6 +272,29 @@ def _is_same_family(sut_model: str, judge_model: str) -> bool:
   return sut_family == judge_family
 
 
+def _content_snippets(text: str) -> dict[str, str]:
+  """截取裁判输出的首尾片段，供 ``JudgeError.context`` 做排障归因。
+
+  解析失败时最有用的信息是「裁判到底输出了什么形状」：是整段自由文本（前缀被吃掉），
+  还是 JSON 在中间被截断（缺右括号），还是 schema 对但字段名写错。只报长度无法区分
+  这三种情况，于是把首尾各 200 字符放进 context。
+
+  截断而不是全量：裁判偶尔吐几千字解释，全量进 context 会让异常对象被人无意间
+  写进日志或报告（``str(exc)`` 只渲染键名，但 ``exc.context`` 是公开可读的）。
+
+  Args:
+    text: 裁判输出的原始文本（已 strip）。
+
+  Returns:
+    dict[str, str]: ``content_head``（前 200 字符）与 ``content_tail``（后 200 字符）；
+      文本短于 200 字符时两者都等于全文，长度在 200-400 之间时两段重叠但覆盖全文。
+  """
+  return {
+    "content_head": text[:_CONTENT_SNIPPET_CHARS],
+    "content_tail": text[-_CONTENT_SNIPPET_CHARS:],
+  }
+
+
 def _parse_judge_json(content: str) -> dict[str, Any]:
   """把裁判输出解析成 JSON 对象，允许前后缀文本。
 
@@ -223,6 +313,8 @@ def _parse_judge_json(content: str) -> dict[str, Any]:
     JudgeError: 整串与提取段都解析失败、输出中不存在 ``{``、或 JSON 顶层不是对象时抛出。
   """
   text = content.strip()
+  # 三处解析失败都要带原文首尾片段，只算一次：三份看起来一样的截断代码迟早各自漂移
+  snippets = _content_snippets(text)
   # 哨兵而非 None：``"null"`` 是合法 JSON，解析结果为 None，不能与「解析失败」混淆
   parsed: Any = _PARSE_FAILED
   try:
@@ -236,7 +328,12 @@ def _parse_judge_json(content: str) -> dict[str, Any]:
     if start == -1:
       raise JudgeError(
         message="裁判输出不是合法 JSON：未找到 { 起始的 JSON 对象",
-        context={"adapter": "judge", "stage": "parse", "content_length": len(text)},
+        context={
+          "adapter": "judge",
+          "stage": "parse",
+          "content_length": len(text),
+          **snippets,
+        },
       )
     try:
       parsed = _JSON_DECODER.raw_decode(text, start)[0]
@@ -248,12 +345,19 @@ def _parse_judge_json(content: str) -> dict[str, Any]:
           "stage": "parse",
           "error_type": type(exc).__name__,
           "content_length": len(text),
+          **snippets,
         },
       ) from exc
   if not isinstance(parsed, dict):
     raise JudgeError(
       message=f"裁判输出 JSON 顶层不是对象，实际类型: {type(parsed).__name__}",
-      context={"adapter": "judge", "stage": "parse", "actual_type": type(parsed).__name__},
+      context={
+        "adapter": "judge",
+        "stage": "parse",
+        "actual_type": type(parsed).__name__,
+        "content_length": len(text),
+        **snippets,
+      },
     )
   return cast("dict[str, Any]", parsed)
 
@@ -263,7 +367,8 @@ class JudgeAdapter:
 
   生命周期只有两段：构造期做静态校验（模型名非空、强制异族），调用期做一次裁判调用
   与结论校验。**不做重试、不做并发调用、不写库**——这些都属后续任务的范围
-  （降级与 κ 标定见 M2-D08），本类的职责边界在此收住，见 ADR 0013 的【边界】。
+  （κ 标定见 ``kappa.py``，多次采样投票见 ADR 0013 边界二复审记录），本类的职责边界
+  在此收住，见 ADR 0013 的【边界】。
 
   Attributes:
     sut_model: 被测模型名（构造期与裁判模型做异族校验）。
@@ -343,7 +448,8 @@ class JudgeAdapter:
 
     流程：构造 prompt → ``judge_adapter.acomplete`` → 解析 JSON → ``JudgeOutput`` 校验。
     任一环节失败都抛 ``JudgeError``，**不返回**任何默认结论：不可判必须有独立出口，
-    否则它会以「通过」或「不通过」的身份混进通过率。
+    否则它会以「通过」或「不通过」的身份混进通过率。需要「不抛异常、按类型分支」的
+    调用方用 ``aevaluate_safe``，两者的判定口径完全一致。
 
     Args:
       case_description: 用例描述。
@@ -388,3 +494,61 @@ class JudgeAdapter:
           "payload_keys": sorted(payload),
         },
       ) from exc
+
+  async def aevaluate_safe(
+    self, case_description: str, sut_output: str
+  ) -> JudgeOutput | Unjudgeable:
+    """调用裁判做判定，失败时返回 ``Unjudgeable`` 而不是抛异常。
+
+    ``aevaluate`` 的失败语义保持不变：异常适合「单条判定的调用方要知道为什么失败」，
+    却不适合「批量执行器要把不可判条数计进报告」——后者每判一条都要包一层
+    ``try/except``，而 ``except`` 的粒度一旦写宽（例如顺手写成 ``Exception``），
+    真正的编码错误会被当成「不可判」计进统计，报告上的数字随之失真。本方法把失败
+    收成取值，调用方按类型分支：
+
+    .. code-block:: python
+
+      result = await judge.aevaluate_safe(desc, output)
+      if isinstance(result, Unjudgeable):
+        counter[result.stage] += 1
+      else:
+        scored.append(result)
+
+    **不改变任何判定口径**：成功返回的就是 ``aevaluate`` 的那个 ``JudgeOutput``，
+    失败时的 stage / 字段归因也仍是 ``aevaluate`` 写进 context 的那一份；本方法只做
+    「异常 → 取值」的搬运，不新增任何兜底结论。
+
+    Args:
+      case_description: 用例描述。
+      sut_output: 被测应用的实际输出。
+
+    Returns:
+      JudgeOutput | Unjudgeable: 成功为经契约校验的判定结论；失败为携带 stage 与
+        失败字段的不可判记录。
+    """
+    try:
+      return await self.aevaluate(case_description, sut_output)
+    except JudgeError as exc:
+      return Unjudgeable.from_error(exc)
+
+
+async def aevaluate_safe(
+  judge: JudgeAdapter,
+  case_description: str,
+  sut_output: str,
+) -> JudgeOutput | Unjudgeable:
+  """``JudgeAdapter.aevaluate_safe`` 的自由函数形式（同一实现，仅转发）。
+
+  存在的理由：批量执行器常把「判定」当成一个可替换的可调用对象传递（测试里换成固定
+  结论的假裁判、生产里换成真适配器），持有函数比持有实例更自然。函数体只有一行转发，
+  不存在第二套实现，因此两条入口的判定口径不可能分叉。
+
+  Args:
+    judge: 裁判适配器实例。
+    case_description: 用例描述。
+    sut_output: 被测应用的实际输出。
+
+  Returns:
+    JudgeOutput | Unjudgeable: 同 ``JudgeAdapter.aevaluate_safe``。
+  """
+  return await judge.aevaluate_safe(case_description, sut_output)
