@@ -207,17 +207,41 @@ class TestJsonParsing:
     with pytest.raises(JudgeError, match="提取段解析失败"):
       await mock_judge_adapter('{"passed": true, "score": 0.9').aevaluate("x", "y")
 
-  async def test_deep_nesting_recursion_error_is_unjudgeable(
+  async def test_recursion_error_is_unjudgeable(
+    self,
+    mock_judge_adapter: Callable[[str], JudgeAdapter],
+    monkeypatch: pytest.MonkeyPatch,
+  ) -> None:
+    """``json.loads`` 递归溢出必须收口为 JudgeError，不得裸逃逸。
+
+    用 monkeypatch 固定异常形态而非构造真实深嵌套：3.13+ 的 C 递归上限与 3.11 不同，
+    真实深嵌套在哪个深度触发 RecursionError 会随版本与平台栈大小漂移（D20 实测 3.13/
+    3.14 的 2000 层可解析成功），断言一旦绑上触发机制就变成版本敏感。裸 RecursionError
+    会绕过「调用方只需 except JudgeError」的契约，这才是要钉住的点。
+    """
+
+    def _boom(_raw: str) -> object:
+      """模拟 json.loads 递归溢出。"""
+      raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr("aquamind.judge.json.loads", _boom)
+    with pytest.raises(JudgeError, match="不是合法 JSON"):
+      await mock_judge_adapter("深嵌套输出（不含花括号）").aevaluate("x", "y")
+
+  async def test_real_deep_nesting_never_leaks_recursion_error(
     self, mock_judge_adapter: Callable[[str], JudgeAdapter]
   ) -> None:
-    """深嵌套输出触发 RecursionError 时收口为 JudgeError。
+    """≥2000 层真实嵌套：任何版本都不得把裸 RecursionError 抛给调用方。
 
-    这里用真实深嵌套串而非 monkeypatch：``json.loads`` 的递归深度由解释器限制，
-    裸 RecursionError 会绕过「调用方只需 except JudgeError」的契约。
+    只钉「契约不击穿」，不钉触发机制：该版本触发递归上限时解析阶段判不可判，
+    解析成功时顶层不是对象、同样判不可判——两种出口都合法，具体消息随 json 的
+    递归实现差异而不同（3.11 走前者，3.13/3.14 视嵌套深度与平台栈大小而定）。
     """
-    deeply_nested = "[" * 20000 + "]" * 20000
-    with pytest.raises(JudgeError, match="不是合法 JSON"):
+    deeply_nested = "[" * 2000 + "]" * 2000
+    with pytest.raises(JudgeError) as excinfo:
       await mock_judge_adapter(deeply_nested).aevaluate("x", "y")
+    # 两条出口都发生在解析阶段，用 stage 统一断言，避免绑定到某一条消息上
+    assert excinfo.value.context["stage"] == "parse"
 
   async def test_top_level_array_is_unjudgeable(
     self, mock_judge_adapter: Callable[[str], JudgeAdapter]
