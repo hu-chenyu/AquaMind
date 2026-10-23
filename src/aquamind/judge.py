@@ -81,8 +81,8 @@ _PARSE_FAILED = object()
 
 # 解析失败时随 context 携带的原文片段长度（首 200 / 尾 200 字符）。
 # 只放 context 不放 message：message 会随 logging.exception 进日志与报告，而裁判原文
-# 可能含用例内容甚至被测系统的敏感输出。400 字符以内的输出首尾两段已覆盖全文
-# （两段重叠是有意的：宁可重复，也不让短输出因截断丢信息）。
+# 可能含用例内容甚至被测系统的敏感输出。400 字符以内（含）首尾两段已覆盖全文
+# （允许重叠是有意的：宁可重复，也不让短输出因截断丢信息；恰好 400 时两段相接）。
 _CONTENT_SNIPPET_CHARS = 200
 
 
@@ -206,7 +206,8 @@ class Unjudgeable:
     只做字段搬运，不做任何判定：``stage`` / ``error_type`` / ``fields`` 全部原样取自
     ``exc.context``，因此「同一个失败，异常与结果说的是同一件事」。context 缺 ``stage``
     （模块外自行 raise 的 ``JudgeError``）时留空串，不猜一个阶段——猜错会把某个阶段
-    的责任记到另一个阶段头上，而按阶段计数正是本类型的用途。
+    的责任记到另一个阶段头上，而按阶段计数正是本类型的用途。同理，``fields`` 不是
+    list / tuple 时按「无字段」处理，不把字符串逐字符拆成字段名。
 
     Args:
       exc: 判定失败时抛出的异常。
@@ -215,6 +216,11 @@ class Unjudgeable:
       Unjudgeable: 携带阶段与失败字段的不可判记录。
     """
     raw_fields = exc.context.get("fields") or ()
+    if not isinstance(raw_fields, (list, tuple)):
+      # 模块外自行 raise 的 JudgeError 可能把 fields 写成裸字符串（"reason"）。
+      # 直接迭代会逐字符炸成 ('r', 'e', 'a', ...)，这比丢掉归因更误导：报告上会出现
+      # 一串单字母字段名，读的人会以为契约真的报了六个字段。非序列一律按「无字段」处理。
+      raw_fields = ()
     error_type = exc.context.get("error_type")
     return cls(
       stage=str(exc.context.get("stage", "")),
@@ -286,8 +292,9 @@ def _content_snippets(text: str) -> dict[str, str]:
     text: 裁判输出的原始文本（已 strip）。
 
   Returns:
-    dict[str, str]: ``content_head``（前 200 字符）与 ``content_tail``（后 200 字符）；
-      文本短于 200 字符时两者都等于全文，长度在 200-400 之间时两段重叠但覆盖全文。
+    dict[str, str]: ``content_head``（前 200 字符）与 ``content_tail``（后 200 字符）。
+      200 字符以内（含）两段均为全文；200-400 之间两段重叠（合起来覆盖全文）；
+      400 以上两段相接（恰好 400 时相接而不重叠）。
   """
   return {
     "content_head": text[:_CONTENT_SNIPPET_CHARS],
@@ -484,16 +491,24 @@ class JudgeAdapter:
       # 消息里必须点名字段：契约失败时「哪个字段不合法」是唯一有用的信息，
       # 只报「校验失败」会让排障回到逐条猜 schema 的起点
       fields = sorted({str(err["loc"][0]) for err in exc.errors() if err["loc"]})
-      raise JudgeError(
-        message=f"裁判输出未通过 JSON 契约校验，不合法字段: {'、'.join(fields)}",
-        context={
-          "adapter": "judge",
-          "stage": "contract",
-          "fields": fields,
-          "error_types": [str(err["type"]) for err in exc.errors()],
-          "payload_keys": sorted(payload),
-        },
-      ) from exc
+      error_types = [str(err["type"]) for err in exc.errors()]
+      context: dict[str, Any] = {
+        "adapter": "judge",
+        "stage": "contract",
+        "fields": fields,
+        "error_types": error_types,
+        "payload_keys": sorted(payload),
+      }
+      if fields:
+        message = f"裁判输出未通过 JSON 契约校验，不合法字段: {'、'.join(fields)}"
+      else:
+        # 只有 model 级错误（loc 为空元组）时没有字段可点名。照常拼「不合法字段: 」
+        # 会留下悬挂冒号，且 Unjudgeable 的 fields 与 error_type 双双为空——归因全丢，
+        # 报告层只能记一条「不可判」却查不出原因。故回退用 error_types 生成消息，
+        # 并把首个错误类型落进 error_type，保证「fields 与 error_type 至少一个有值」。
+        message = f"裁判输出未通过 JSON 契约校验，不合法输出格式（{'、'.join(error_types)}）"
+        context["error_type"] = error_types[0]
+      raise JudgeError(message=message, context=context) from exc
 
   async def aevaluate_safe(
     self, case_description: str, sut_output: str

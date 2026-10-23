@@ -19,7 +19,11 @@
   ``JudgeOutput``，失败返回 ``Unjudgeable`` 并按 ``stage``（complete / parse / contract）
   与失败字段归因，且不把裁判原文带进结果对象；
 - 解析可追溯性（D08）：parse 阶段的 ``JudgeError.context`` 带 ``content_head`` /
-  ``content_tail`` 截断片段（各 200 字符，短输出保留全文），正文不含原文。
+  ``content_tail`` 截断片段（各 200 字符，短输出保留全文），正文不含原文；200 / 250 /
+  400 三个长度边界各钉一次（全量 / 重叠 / 相接）；
+- 归因不可双降解（D08 热修）：model 级契约错误（``loc=()``）时 ``fields`` 为空但
+  ``error_type`` 顶替承载归因、消息不悬挂冒号；模块外把 ``fields`` 写成字符串时按
+  「无字段」处理，不逐字符拆。
 
 全部用例用 ``CallableAdapter`` 注入裁判响应，不发起任何网络调用（CI 零 key），
 也不读取任何真实密钥或环境变量。
@@ -30,6 +34,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from pydantic import ValidationError
 
 from aquamind.adapters import CallableAdapter
 from aquamind.exceptions import AdapterError, AquaMindError
@@ -578,3 +583,91 @@ class TestParseErrorTraceability:
     assert context["actual_type"] == "list"
     assert context["content_head"] == content
     assert context["content_tail"] == content
+
+  @pytest.mark.parametrize("length", [200, 250, 400])
+  async def test_snippet_boundary_lengths(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter], length: int
+  ) -> None:
+    """200 / 250 / 400 三个边界：以内两段均为全文、之间重叠、恰好 400 相接。
+
+    200 是「一段刚好装下全文」的临界点，250 落在两段必然重叠的区间，400 是
+    「两段刚好铺满全文」的临界点。三种形态都只靠端点判断会各错一种，故逐一钉住。
+    """
+    content = "".join(chr(0x4E00 + index) for index in range(length))
+    with pytest.raises(JudgeError) as excinfo:
+      await mock_judge_adapter(content).aevaluate("x", "y")
+    context = excinfo.value.context
+    assert context["content_head"] == content[:200]
+    assert context["content_tail"] == content[-200:]
+    if length == 200:
+      assert context["content_head"] == content
+      assert context["content_tail"] == content
+    if length == 250:
+      # 下标 50-199 的 150 个字符同时落在两段里：中段没有被截掉
+      overlap = content[50:200]
+      assert overlap in context["content_head"]
+      assert overlap in context["content_tail"]
+    if length == 400:
+      # 恰好相接：两段拼起来就是全文，既不丢字符也不重复
+      assert context["content_head"] + context["content_tail"] == content
+
+
+class TestUnjudgeableEdgeCases:
+  """model 级契约错误与非序列 fields：归因不得双双降解（D08 热修）。"""
+
+  @staticmethod
+  def _model_level_error() -> ValidationError:
+    """构造一个 ``loc=()`` 的 ValidationError，模拟 model 级校验抛错。
+
+    pydantic 只在 model_validator / root model 场景产出 loc 为空的错误，本模块的
+    字段校验不会走到这里；但一旦出现，``fields`` 会为空，正是归因全丢的入口。
+    """
+    return ValidationError.from_exception_data(
+      "JudgeOutput",
+      [
+        {
+          "type": "value_error",
+          "loc": (),
+          "input": {},
+          "ctx": {"error": ValueError("模型级校验失败")},
+        }
+      ],
+    )
+
+  async def test_model_level_error_keeps_attribution(
+    self,
+    mock_judge_adapter: Callable[[str], JudgeAdapter],
+    monkeypatch: pytest.MonkeyPatch,
+  ) -> None:
+    """只产出 model 级错误时：消息不悬挂冒号，error_type 顶替 fields 承载归因。"""
+    error = self._model_level_error()
+
+    def _boom(_payload: object) -> JudgeOutput:
+      raise error
+
+    monkeypatch.setattr(JudgeOutput, "model_validate", staticmethod(_boom))
+    with pytest.raises(JudgeError) as excinfo:
+      await mock_judge_adapter(_VALID_JSON).aevaluate("x", "y")
+    context = excinfo.value.context
+    assert context["fields"] == []
+    assert context["error_type"] == "value_error"
+    assert "不合法输出格式" in str(excinfo.value)
+    # 悬挂冒号是旧实现的症状：消息以「不合法字段: 」结尾而后面什么都没有
+    assert not str(excinfo.value).rstrip().endswith("字段:")
+
+    result = await mock_judge_adapter(_VALID_JSON).aevaluate_safe("x", "y")
+    assert isinstance(result, Unjudgeable)
+    assert result.stage == "contract"
+    assert result.fields == ()
+    # fields 与 error_type 至少一个有值：这里是 error_type 顶上
+    assert result.error_type == "value_error"
+
+  def test_non_sequence_fields_treated_as_empty(self) -> None:
+    """模块外把 fields 写成字符串时按「无字段」处理，不逐字符炸成单字母字段名。"""
+    exc = JudgeError(
+      message="外部构造的契约失败",
+      context={"stage": "contract", "fields": "reason"},
+    )
+    result = Unjudgeable.from_error(exc)
+    assert result.fields == ()
+    assert result.stage == "contract"
