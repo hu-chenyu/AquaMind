@@ -4,11 +4,12 @@
 - 强制异族校验：同族构造期被拒（含大小写/厂商前缀分段形态与「完全相同字符串」），
   异族构造成功；两方都不命中已知前缀时按完整字符串比较（相同=同族、不同=异族）；
 - 构造期空模型名拦截；
-- 结构化 JSON：合法输出返回 ``JudgeOutput``；带前后缀文本时提取首个 ``{`` 起的 JSON
-  对象；``raw_decode`` 支持字符串内含花括号与嵌套对象；
+- 结构化 JSON：合法输出返回 ``JudgeOutput``；带前后缀文本（含 json 代码块围栏）时提取
+  首个 ``{`` 起的 JSON 对象；``raw_decode`` 支持字符串内含花括号与嵌套对象；
 - 契约校验：缺字段（passed / score / reason 各一）、类型错（passed 非严格布尔、
-  score 为数字型字符串、score 为布尔、reason 非字符串）、score 越界（下界以下 / 上界以上）、
-  JSON 顶层不是对象，全部抛 ``JudgeError`` 且消息里点名具体字段；
+  score 为数字型字符串、score 为布尔、reason 非字符串）、score 越界（下界以下 / 上界以上 /
+  NaN / Infinity 这类非有限值）、reason 为空白、JSON 顶层不是对象，全部抛 ``JudgeError``
+  且消息里点名具体字段；
 - 坏 JSON：完全不是 JSON、提取段解析失败、深嵌套触发 ``RecursionError``；
 - 裁判后端故障：``AdapterError`` 在 Judge 边界转成 ``JudgeError``，原始异常保留在
   ``__cause__``（本次判定不可判，而非被测应用退化）；
@@ -193,6 +194,20 @@ class TestJsonParsing:
     with pytest.raises(JudgeError, match="提取段解析失败"):
       await mock_judge_adapter(content).aevaluate("2+2=?", "4")
 
+  async def test_markdown_fence_extracted(
+    self, mock_judge_adapter: Callable[[str], JudgeAdapter]
+  ) -> None:
+    """裁判用 json 代码块围栏（三反引号 + json）包裹输出时仍能提取。
+
+    这是真实裁判最常见的格式噪音：整串不是 JSON，但 ``find("{")`` + ``raw_decode``
+    能定位到被围栏包住的那个对象。system prompt 明令禁止围栏，但禁止不等于不会发生，
+    解析层必须兜住——兜不住就会把一整批正常判定记成不可判。
+    """
+    content = '```json\n{"passed": true, "score": 0.9, "reason": "围栏测试"}\n```'
+    output = await mock_judge_adapter(content).aevaluate("2+2=?", "4")
+    assert output.passed is True
+    assert output.score == 0.9
+
   async def test_plain_text_is_unjudgeable(
     self, mock_judge_adapter: Callable[[str], JudgeAdapter]
   ) -> None:
@@ -324,6 +339,47 @@ class TestContractValidation:
     payload = '{"passed": true, "score": 0.9, "reason": "理由", "confidence": 0.7}'
     with pytest.raises(JudgeError, match="confidence"):
       await mock_judge_adapter(payload).aevaluate("x", "y")
+
+  @pytest.mark.parametrize(
+    ("payload", "note"),
+    [
+      ('{"passed": true, "score": 0.9, "reason": ""}', "空串"),
+      # 全空白长度足够，min_length 拦不住，由 strip 后的校验器拦下
+      ('{"passed": true, "score": 0.9, "reason": "   "}', "全空白"),
+    ],
+  )
+  async def test_blank_reason_rejected(
+    self,
+    mock_judge_adapter: Callable[[str], JudgeAdapter],
+    payload: str,
+    note: str,
+  ) -> None:
+    """空证据不被契约接受：空串与全空白理由都判不可判，且点名 reason。"""
+    with pytest.raises(JudgeError, match="reason") as excinfo:
+      await mock_judge_adapter(payload).aevaluate("x", "y")
+    assert excinfo.value.context["stage"] == "contract", note
+    assert excinfo.value.context["fields"] == ["reason"]
+
+  @pytest.mark.parametrize(
+    ("payload", "note"),
+    [
+      # NaN / Infinity 是 Python json.loads 接受的**扩展字面量**（标准 JSON 没有），
+      # 因此它们能穿过解析层到达契约层——由 allow_inf_nan=False 拦下
+      ('{"passed": true, "score": NaN, "reason": "理由"}', "NaN"),
+      ('{"passed": true, "score": Infinity, "reason": "理由"}', "Infinity"),
+    ],
+  )
+  async def test_non_finite_score_rejected(
+    self,
+    mock_judge_adapter: Callable[[str], JudgeAdapter],
+    payload: str,
+    note: str,
+  ) -> None:
+    """非有限分数判不可判：NaN 与任何数比较都为假，会让聚合整体变成 NaN。"""
+    with pytest.raises(JudgeError, match="score") as excinfo:
+      await mock_judge_adapter(payload).aevaluate("x", "y")
+    assert excinfo.value.context["stage"] == "contract", note
+    assert excinfo.value.context["fields"] == ["score"]
 
 
 class TestPromptAndIntegration:

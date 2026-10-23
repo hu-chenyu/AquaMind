@@ -23,6 +23,13 @@
 HTTP 调用，不重复造轮子。裁判 API 的 429 / 超时 / 网络故障由 ``OpenAIAdapter`` 包装为
 ``AdapterError``，本模块**不重试**，只在边界处转成 ``JudgeError`` 并保留原始异常链
 （``__cause__``）：这一次判定拿不到结论，属「不可判」而非「被测应用退化」。
+
+异常放置说明：``JudgeError`` 有意定义在本模块内而非 ``exceptions.py``，原因是紧邻唯一使用处
+（``JudgeAdapter`` 的构造期与 ``aevaluate`` 的四处 raise），且 ``JudgeError`` 不被其他模块
+import（测试从 ``aquamind.judge`` 导入是测试侧惯例）。``exceptions.py`` 的统一体系覆盖的是
+**跨模块共享**异常（Config / Loader / Adapter / Replay / Budget），``JudgeError`` 属模块内
+私有异常，故不破坏该体系「统一基类 + 分层子类」的宣称；若将来出现第二个模块需要 catch
+``JudgeError``，再迁入 ``exceptions.py`` 并改 import（登记见 ADR 0013 边界八）。
 """
 
 from __future__ import annotations
@@ -80,7 +87,7 @@ class JudgeError(AquaMindError):
   触发场景：
     - 构造期：``sut_model`` / ``judge_model`` 为空，或两者同族；
     - 调用期：裁判 API 失败（原始 ``AdapterError`` 保留在 ``__cause__``）、输出不是
-      合法 JSON、JSON 顶层不是对象、缺字段 / 类型错 / score 越界。
+      合法 JSON、JSON 顶层不是对象、缺字段 / 类型错 / score 越界 / reason 为空白。
   """
 
 
@@ -93,7 +100,7 @@ class JudgeOutput(BaseModel):
   Attributes:
     passed: 布尔判定结论（严格布尔，``1`` / ``"true"`` 不被接受）。
     score: 归一化分数，闭区间 [0.0, 1.0]，拒绝 NaN / inf。
-    reason: 中文判定理由（非空判定由调用方按需追加，本契约只要求是字符串）。
+    reason: 中文判定理由，非空且 strip 后仍非空（空证据不承载任何复核信息）。
   """
 
   model_config = ConfigDict(extra="forbid")
@@ -105,7 +112,7 @@ class JudgeOutput(BaseModel):
     allow_inf_nan=False,
     description="归一化分数，闭区间 0.0-1.0",
   )
-  reason: str = Field(description="中文判定理由")
+  reason: str = Field(min_length=1, description="中文判定理由")
 
   @field_validator("score", mode="before")
   @classmethod
@@ -130,6 +137,29 @@ class JudgeOutput(BaseModel):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
       return value
     raise ValueError(f"score 必须是数字（int 或 float），实际类型: {type(value).__name__}")
+
+  @field_validator("reason", mode="after")
+  @classmethod
+  def _reject_blank_reason(cls, value: str) -> str:
+    """拒绝空串与「全空白」的理由。
+
+    ``min_length=1`` 只拦空串：``"   "`` 长度足够却没有任何复核价值——一个全空白的理由
+    与字段缺失等价，都让分数无法被人工核对（ADR 0013 决策三把 reason 定位为「证据」）。
+    因此这里再拦一次 strip 后为空，口径与输入契约的 ``ScoreTag.name``（``NonBlankStr``）
+    一致：既有长度约束，也要求剥掉空白后仍有内容。
+
+    Args:
+      value: 已通过长度校验的理由字符串。
+
+    Returns:
+      str: 原样返回（不做 strip，保留调用方原文，保证 JSON 往返逐字一致）。
+
+    Raises:
+      ValueError: 字符串仅由空白字符组成时抛出。
+    """
+    if not value.strip():
+      raise ValueError("reason 不能为空白字符串")
+    return value
 
 
 def _model_family(model: str) -> str | None:
